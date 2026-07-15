@@ -1,0 +1,1 @@
+- **feat(dashboard):** the Usage Analytics chart and Cost Explorer gained **180D** and **365D** period presets alongside the existing 1D/7D/30D/90D/YTD/All Time options, and a latent gap where those values would have silently returned unbounded all-time data instead of a bounded window was closed in `getRangeStartIso()` (thanks @SeaXen, @Jordannst).
