@@ -1,6 +1,9 @@
-// Extracted from CostOverviewTab.tsx (#7213 file-size ratchet) — no behavior change, verbatim move.
-// NOTE: the `t("legacyFreeLabel")` reference below has no enclosing translation hook — this is a
-// pre-existing bug on the base branch (predates this extraction), not introduced by this move.
+// Extracted from CostOverviewTab.tsx (#7213 file-size ratchet).
+// The `t("legacyFreeLabel")` reference had no enclosing translation hook on the base branch
+// (pre-existing TS2304 / runtime ReferenceError, baselined under CostOverviewTab.tsx). The
+// extraction moved it to this file, so the per-file dashboard-typecheck gate now surfaces it as
+// new — fixed here by wiring the hook, matching the sibling CostExplorerCard.tsx pattern.
+import { useTranslations } from "next-intl";
 import { Card } from "@/shared/components";
 import { createCurrencyFormatter } from "../costFormatters";
 
@@ -23,6 +26,7 @@ export function TopListCard({
   locale: string;
   hasCostData?: boolean;
 }) {
+  const t = useTranslations("costs");
   const currencyFormatter = createCurrencyFormatter(locale);
 
   return (
