@@ -197,6 +197,64 @@ test("GET /api/usage/analytics applies Codex Fast tier multipliers and exposes t
   assertClose(body.presetSummaries["1d"].totalCost, 0.08);
 });
 
+function dateDaysAgo(days: number): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - days);
+  return d.toISOString().slice(0, 10);
+}
+
+function seedDailySummaryRow(dateKey: string, requests: number) {
+  const db = core.getDbInstance();
+  db.prepare(
+    `INSERT INTO daily_usage_summary (date, provider, model, total_requests, total_input_tokens, total_output_tokens, total_cost)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(dateKey, "openai", "gpt-4o", requests, 100, 50, 0);
+}
+
+// #2361/#2415 — extend the fixed period presets beyond the previous 90-day cap.
+// Before this change, "180d" and "365d" both fell through the getRangeStartIso()
+// `default` branch (same as unbounded "all"), so a 180-day chip would silently
+// show all-time data instead of a bounded window.
+//
+// Note: getUsageSummary's totalRequests is `COUNT(*)` over the unified source, so
+// each daily_usage_summary row (one aggregated calendar day) contributes exactly 1
+// regardless of its own `total_requests` column — that pre-existing accounting
+// detail is unrelated to this fix; distinct row counts are enough to prove the
+// date-window boundaries are respected.
+test("GET /api/usage/analytics?range=180d and range=365d apply distinct bounded windows (#2361/#2415)", async () => {
+  seedDailySummaryRow(dateDaysAgo(200), 7); // inside 365d + all, outside 180d
+  seedDailySummaryRow(dateDaysAgo(400), 11); // inside all only, outside 180d + 365d
+
+  const res180 = await analyticsRoute.GET(
+    makeRequest("http://localhost/api/usage/analytics?range=180d")
+  );
+  const body180 = await res180.json();
+  assert.equal(res180.status, 200);
+  assert.equal(body180.summary.totalRequests, 0, "180d must exclude rows older than 180 days");
+
+  const res365 = await analyticsRoute.GET(
+    makeRequest("http://localhost/api/usage/analytics?range=365d")
+  );
+  const body365 = await res365.json();
+  assert.equal(res365.status, 200);
+  assert.equal(
+    body365.summary.totalRequests,
+    1,
+    "365d must include the 200-day-old row but not the 400-day-old row"
+  );
+
+  const resAll = await analyticsRoute.GET(
+    makeRequest("http://localhost/api/usage/analytics?range=all")
+  );
+  const bodyAll = await resAll.json();
+  assert.equal(resAll.status, 200);
+  assert.equal(
+    bodyAll.summary.totalRequests,
+    2,
+    "all-time must include both the 200-day-old and 400-day-old rows"
+  );
+});
+
 test("GET /api/usage/analytics does not report flex savings for non-Codex providers", async () => {
   const db = core.getDbInstance();
   db.prepare(

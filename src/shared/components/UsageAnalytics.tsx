@@ -126,6 +126,8 @@ export default function UsageAnalytics() {
     { value: "7d", label: t("period7D") },
     { value: "30d", label: t("period30D") },
     { value: "90d", label: t("period90D") },
+    { value: "180d", label: t("period180D") },
+    { value: "365d", label: t("period365D") },
     { value: "ytd", label: t("periodYTD") },
     { value: "all", label: t("periodAll") },
   ];

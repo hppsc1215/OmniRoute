@@ -9,7 +9,7 @@ import {
 // ─── parseCostRange ────────────────────────────────────────────────────────
 
 test("parseCostRange accepts every valid range", () => {
-  for (const r of ["7d", "30d", "90d", "all"]) {
+  for (const r of ["7d", "30d", "90d", "180d", "365d", "all"]) {
     assert.equal(parseCostRange(r), r);
   }
 });

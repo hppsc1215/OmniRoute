@@ -11,7 +11,7 @@ import { buildUnifiedSource, getProviderDailyUsageRows } from "@/lib/db/usageAna
  * route's file size is frozen at the quality-gate baseline.
  *
  * Query params (all optional, mirror /api/usage/analytics):
- *  - range: "1d" | "7d" | "30d" | "90d" | "ytd" | "all" (default "30d")
+ *  - range: "1d" | "7d" | "30d" | "90d" | "180d" | "365d" | "ytd" | "all" (default "30d")
  *  - startDate / endDate: ISO-8601, overrides `range` when both are set
  *  - date: YYYY-MM-DD, narrows the result to a single calendar date
  */
@@ -32,6 +32,12 @@ function getRangeStartIso(range: string): string | null {
       break;
     case "90d":
       start.setDate(start.getDate() - 90);
+      break;
+    case "180d":
+      start.setDate(start.getDate() - 180);
+      break;
+    case "365d":
+      start.setDate(start.getDate() - 365);
       break;
     case "ytd":
       start.setMonth(0, 1);

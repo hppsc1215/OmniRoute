@@ -39,6 +39,12 @@ function getRangeStartIso(range: string): string | null {
     case "90d":
       start.setDate(start.getDate() - 90);
       break;
+    case "180d":
+      start.setDate(start.getDate() - 180);
+      break;
+    case "365d":
+      start.setDate(start.getDate() - 365);
+      break;
     case "ytd":
       start.setMonth(0, 1);
       start.setHours(0, 0, 0, 0);
@@ -881,7 +887,7 @@ export async function GET(request: Request) {
     } as any;
 
     if (presetsParam) {
-      const allowedRanges = new Set(["1d", "7d", "30d", "90d", "ytd", "all"]);
+      const allowedRanges = new Set(["1d", "7d", "30d", "90d", "180d", "365d", "ytd", "all"]);
       const presetRanges = presetsParam
         .split(",")
         .map((preset) => preset.trim())
