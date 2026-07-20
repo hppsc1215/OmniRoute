@@ -16,6 +16,19 @@ function isHttpUrl(value: string): boolean {
 const CODEX_REASONING_EFFORT_VALUES = new Set(["none", "low", "medium", "high", "xhigh", "max"]);
 const REQUEST_DEFAULT_SERVICE_TIER_VALUES = new Set(["default", "priority", "fast", "flex"]);
 
+/**
+ * gheUrl must parse and use HTTPS. Shared by the Zod refinement above and by the
+ * OAuth route's raw entry points (searchParams / device-flow extraData), so a
+ * malformed or non-HTTPS enterprise URL is rejected before any upstream fetch.
+ */
+export function isValidGheUrl(raw: string): boolean {
+  try {
+    return new URL(raw).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 export function validateProviderSpecificData(
   data: Record<string, unknown> | undefined,
   ctx: z.RefinementCtx
