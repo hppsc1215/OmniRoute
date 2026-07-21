@@ -81,12 +81,34 @@ function getCopilotTokenExpiryMs(expiresAt: unknown): number {
   return 0;
 }
 
+// Providers whose OAuth flow yields only a GitHub-style access token (no
+// refresh_token) plus a short-lived Copilot sub-token: github.com Copilot and
+// GHE Copilot (device-code flow against the enterprise host) both fit this
+// shape. Keep both in sync — adding a github-token-only provider elsewhere
+// (e.g. new GHE-flavored Copilot variant) must also list it here.
+const GITHUB_ACCESS_TOKEN_ONLY_PROVIDERS = new Set(["github", "ghe-copilot"]);
+
 function isGitHubAccessTokenOnlyConnection(conn: any): boolean {
   return (
-    String(conn?.provider || "").toLowerCase() === "github" &&
+    GITHUB_ACCESS_TOKEN_ONLY_PROVIDERS.has(String(conn?.provider || "").toLowerCase()) &&
     typeof conn?.accessToken === "string" &&
     conn.accessToken.trim().length > 0
   );
+}
+
+/**
+ * Resolve the Copilot token endpoint base URL for a connection. github.com
+ * Copilot always uses api.github.com; GHE Copilot uses its own per-enterprise
+ * host stored in providerSpecificData.gheUrl at connect time.
+ */
+function getCopilotTokenBaseUrl(conn: any): string {
+  if (String(conn?.provider || "").toLowerCase() === "ghe-copilot") {
+    const gheUrl = conn?.providerSpecificData?.gheUrl;
+    if (typeof gheUrl === "string" && gheUrl.trim().length > 0) {
+      return `${gheUrl.trim().replace(/\/+$/, "")}/api/v3`;
+    }
+  }
+  return "https://api.github.com";
 }
 
 function canClearGitHubNoRefreshTokenState(conn: any): boolean {
@@ -403,7 +425,8 @@ export async function checkConnection(conn) {
         const copilotResult = await refreshCopilotToken(
           conn.accessToken,
           healthCheckLog,
-          proxyConfig
+          proxyConfig,
+          getCopilotTokenBaseUrl(conn)
         );
         if (copilotResult?.token) {
           refreshedProviderSpecificData = {
@@ -756,7 +779,7 @@ export async function checkConnection(conn) {
     // GitHub OAuth token. The health check must also refresh this sub-token before
     // it expires mid-session. The Copilot token expiry is stored in
     // providerSpecificData.copilotTokenExpiresAt (Unix seconds).
-    if (String(conn.provider || "").toLowerCase() === "github") {
+    if (GITHUB_ACCESS_TOKEN_ONLY_PROVIDERS.has(String(conn.provider || "").toLowerCase())) {
       // Re-read the latest connection after the OAuth refresh (onPersist may have updated it).
       const latestConn = (await getProviderConnectionById(conn.id).catch(() => null)) || conn;
       const accessTokenForCopilot = result.accessToken || latestConn.accessToken;
@@ -785,7 +808,8 @@ export async function checkConnection(conn) {
             const copilotResult = await refreshCopilotToken(
               accessTokenForCopilot,
               healthCheckLog,
-              proxyConfig
+              proxyConfig,
+              getCopilotTokenBaseUrl(latestConn)
             );
             if (copilotResult?.token) {
               await updateProviderConnection(conn.id, {
