@@ -1,4 +1,9 @@
-import { BaseExecutor, ExecuteInput, type ProviderCredentials } from "./base.ts";
+import {
+  BaseExecutor,
+  ExecuteInput,
+  type ProviderCredentials,
+  type ProviderConfig,
+} from "./base.ts";
 import { PROVIDERS, OAUTH_ENDPOINTS } from "../config/constants.ts";
 import { getModelTargetFormat } from "../config/providerModels.ts";
 import {
@@ -9,8 +14,16 @@ import { sanitizeResponsesInputItems } from "../services/responsesInputSanitizer
 import { stripUnsupportedParams } from "../translator/paramSupport.ts";
 
 export class GithubExecutor extends BaseExecutor {
-  constructor() {
-    super("github", PROVIDERS.github);
+  // Accept an optional provider id + config override so subclasses (e.g.
+  // GheCopilotExecutor) can pass their own identity through `super(...)`.
+  // Previously this constructor took no parameters and always hardcoded
+  // super("github", PROVIDERS.github) — silently discarding whatever a
+  // subclass passed, so `this.provider` (and every this.provider-driven
+  // decision: fingerprinting, Claude-Code-compat checks, pool registration,
+  // proactive-refresh log labels, etc.) was always "github" even for GHE
+  // Copilot connections.
+  constructor(provider: string = "github", config: Record<string, unknown> = PROVIDERS.github) {
+    super(provider, config as ProviderConfig);
   }
 
   getCopilotToken(credentials: Record<string, any> | null | undefined) {

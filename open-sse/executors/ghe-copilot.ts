@@ -59,7 +59,12 @@ export class GheCopilotExecutor extends GithubExecutor {
       : model;
   }
 
-  override buildUrl(model: string, stream: boolean, urlIndex = 0, credentials: ProviderCredentials | null = null): string {
+  override buildUrl(
+    model: string,
+    stream: boolean,
+    urlIndex = 0,
+    credentials: ProviderCredentials | null = null
+  ): string {
     // GHE Copilot proxy only reliably serves /chat/completions. Route every
     // model there (including ones flagged openai-responses) and let the
     // Responses→Chat transformer handle the format. Going to /responses on the
@@ -110,7 +115,14 @@ export class GheCopilotExecutor extends GithubExecutor {
         },
       });
 
-      if (!response.ok) return null;
+      if (!response.ok) {
+        const bodyText = await response.text().catch(() => "");
+        log?.error?.(
+          "TOKEN",
+          `GHE Copilot token endpoint rejected refresh: ${response.status} ${response.statusText} — ${bodyText.slice(0, 300)}`
+        );
+        return null;
+      }
       const data = await response.json();
       log?.info?.("TOKEN", "GHE Copilot token refreshed");
       // GHE returns a dynamic `endpoints` object; the chat/responses proxy host
@@ -145,13 +157,13 @@ export class GheCopilotExecutor extends GithubExecutor {
       // GHE OAuth token endpoint
       const baseUrl = gheUrl.replace(/\/chat\/completions\/?$/, "").replace(/\/responses\/?$/, "");
       const tokenUrl = `${baseUrl}/login/oauth/access_token`;
-      
+
       const params = new URLSearchParams({
         grant_type: "refresh_token",
         refresh_token: refreshToken,
         client_id: this.config.clientId,
       });
-      
+
       if (this.config.clientSecret) {
         params.set("client_secret", this.config.clientSecret);
       }
@@ -164,8 +176,15 @@ export class GheCopilotExecutor extends GithubExecutor {
         },
         body: params,
       });
-      
-      if (!response.ok) return null;
+
+      if (!response.ok) {
+        const bodyText = await response.text().catch(() => "");
+        log?.error?.(
+          "TOKEN",
+          `GHE GitHub OAuth token refresh rejected: ${response.status} ${response.statusText} — ${bodyText.slice(0, 300)}`
+        );
+        return null;
+      }
       const tokens = await response.json();
       log?.info?.("TOKEN", "GHE GitHub token refreshed");
       return {
@@ -212,7 +231,11 @@ export class GheCopilotExecutor extends GithubExecutor {
     );
     if (!githubTokens?.accessToken) return null;
 
-    const copilotResult = await this.refreshCopilotToken(githubTokens.accessToken, log, credentials);
+    const copilotResult = await this.refreshCopilotToken(
+      githubTokens.accessToken,
+      log,
+      credentials
+    );
     if (!copilotResult) return githubTokens;
 
     return {
@@ -229,7 +252,11 @@ export class GheCopilotExecutor extends GithubExecutor {
    * buildUrl routes chat/responses traffic to the correct enterprise host.
    */
   override async refreshCredentials(credentials: ProviderCredentials, log?: ExecutorLog | null) {
-    const copilotResult = await this.refreshCopilotToken(credentials?.accessToken, log, credentials);
+    const copilotResult = await this.refreshCopilotToken(
+      credentials?.accessToken,
+      log,
+      credentials
+    );
 
     if (!copilotResult && credentials?.refreshToken) {
       return this.refreshViaGitHubToken(credentials, log);
