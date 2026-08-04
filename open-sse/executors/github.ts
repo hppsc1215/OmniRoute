@@ -176,12 +176,40 @@ export class GithubExecutor extends BaseExecutor {
       this.applyChatCompletionsOnlyQuirks(model, modifiedBody);
     }
 
-    // Config-driven strip of params unsupported by the target provider/model.
-    // For GitHub Copilot this removes Claude-style `thinking` and
-    // `reasoning_effort` for Claude models that reject them upstream
-    // (Haiku 4.5 / Opus 4.7 — Opus 4.6 / Sonnet 4.6 keep them).
-    // Port from 9router#7ae9fff6 (fixes upstream #1748, #713).
+    // Config-driven strip params unsupported target provider/model.
+    // GitHub Copilot removes Claude-style `thinking` and
+    // `reasoning_effort` Claude models reject upstream
+    // (Haiku4.5/ Opus4.7Opus4.6/ Sonnet4.6keep them).
+    // Port 9router#7ae9fff6 (fixes upstream #1748, #713).
     stripUnsupportedParams("github", model, modifiedBody);
+
+    // Request visible reasoning summaries on the /responses route. GitHub
+    // Copilot's Responses API encrypts reasoning ("private reasoning")
+    // unless the request opts into a visible summary via
+    // `reasoning.summary: "auto"`. Without it the upstream returns only
+    // encrypted_content and OmniRoute can only surface the placeholder
+    // text instead of real thinking. Mirrors the buildUrl /responses gate
+    // (targetFormat openai-responses or codex models, non-Claude/Gemini).
+    // Chat/completions routes are untouched; explicit client summaries win.
+    const responsesTargetFormat = getModelTargetFormat("gh", model);
+    if (
+      (responsesTargetFormat === "openai-responses" || /codex/i.test(model)) &&
+      this.supportsResponsesEndpoint(model) &&
+      modifiedBody &&
+      typeof modifiedBody === "object" &&
+      !Array.isArray(modifiedBody)
+    ) {
+      const reasoning = (modifiedBody as Record<string, unknown>).reasoning;
+      if (
+        reasoning &&
+        typeof reasoning === "object" &&
+        !Array.isArray(reasoning) &&
+        (reasoning as Record<string, unknown>).effort !== undefined &&
+        (reasoning as Record<string, unknown>).summary === undefined
+      ) {
+        (reasoning as Record<string, unknown>).summary = "auto";
+      }
+    }
 
     return modifiedBody;
   }

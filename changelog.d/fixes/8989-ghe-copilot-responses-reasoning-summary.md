@@ -1,0 +1,1 @@
+- **fix(executors):** GitHub Copilot and GHE Copilot `/responses` requests now inject `reasoning.summary: "auto"` when an effort is set but no summary was requested, so the upstream returns visible reasoning text instead of encrypted private reasoning — fixes the encrypted-reasoning placeholder shown for `gpt-5.x` models
