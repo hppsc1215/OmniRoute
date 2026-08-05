@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import GithubExecutor from "../../open-sse/executors/github.ts";
 import GheCopilotExecutor from "../../open-sse/executors/ghe-copilot.ts";
-import type ProviderCredentials from "../../open-sse/executors/base.ts";
+import type { ProviderCredentials } from "../../open-sse/executors/base.ts";
 
 /**
  * Regression tests: GitHub Copilot / GHE Copilot Responses-API reasoning

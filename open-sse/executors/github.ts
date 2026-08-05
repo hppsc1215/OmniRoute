@@ -179,7 +179,7 @@ export class GithubExecutor extends BaseExecutor {
     // Config-driven strip params unsupported target provider/model.
     // GitHub Copilot removes Claude-style `thinking` and
     // `reasoning_effort` Claude models reject upstream
-    // (Haiku4.5/ Opus4.7Opus4.6/ Sonnet4.6keep them).
+    // (Haiku 4.5 / Opus 4.7 — Opus 4.6 / Sonnet 4.6 keep them).
     // Port 9router#7ae9fff6 (fixes upstream #1748, #713).
     stripUnsupportedParams("github", model, modifiedBody);
 
