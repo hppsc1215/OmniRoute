@@ -7,6 +7,7 @@ import {
 } from "../config/providerHeaderProfiles.ts";
 import { sanitizeResponsesInputItems } from "../services/responsesInputSanitizer.ts";
 import { stripUnsupportedParams } from "../translator/paramSupport.ts";
+import { injectResponsesReasoningSummary } from "./base/reasoningSummary.ts";
 
 /**
  * What a Copilot credential refresh resolves to.
@@ -183,47 +184,15 @@ export class GithubExecutor extends BaseExecutor {
     // Port 9router#7ae9fff6 (fixes upstream #1748, #713).
     stripUnsupportedParams("github", model, modifiedBody);
 
-    // Request visible reasoning summaries on the /responses route. GitHub
-    // Copilot's Responses API encrypts reasoning ("private reasoning")
-    // unless the request opts into a visible summary via
-    // `reasoning.summary: "concise"`. Measured against a live GHE Copilot
-    // /responses endpoint (gpt-5.6-luna): "auto" leaves the choice to the
-    // model per reasoning block — most blocks still come back encrypted,
-    // so the placeholder text streams intermittently. "concise" forces a
-    // visible summary for every block. Mirrors the buildUrl /responses gate
-    // (targetFormat openai-responses or codex models, non-Claude/Gemini).
-    // Chat/completions routes are untouched; explicit client summaries win.
-    const responsesTargetFormat = getModelTargetFormat("gh", model);
-    if (
-      (responsesTargetFormat === "openai-responses" || /codex/i.test(model)) &&
-      this.supportsResponsesEndpoint(model) &&
-      modifiedBody &&
-      typeof modifiedBody === "object" &&
-      !Array.isArray(modifiedBody)
-    ) {
-      const reasoning = (modifiedBody as Record<string, unknown>).reasoning;
-      if (
-        reasoning &&
-        typeof reasoning === "object" &&
-        !Array.isArray(reasoning) &&
-        (reasoning as Record<string, unknown>).effort !== undefined &&
-        (reasoning as Record<string, unknown>).summary === undefined
-      ) {
-        (reasoning as Record<string, unknown>).summary = "concise";
-      } else if (
-        (modifiedBody as Record<string, unknown>).reasoning === undefined &&
-        typeof (modifiedBody as Record<string, unknown>).reasoning_effort === "string"
-      ) {
-        // Top-level `reasoning_effort` only (OpenAI-shaped bodies carry the
-        // effort this way): the /responses endpoint only honors a visible
-        // summary on the `reasoning` object, so create it from the top-level
-        // value. The top-level field is left intact — both forms are valid.
-        (modifiedBody as Record<string, unknown>).reasoning = {
-          effort: (modifiedBody as Record<string, unknown>).reasoning_effort,
-          summary: "concise",
-        };
-      }
-    }
+    // Request visible reasoning summaries on the /responses route (shared
+    // gate — see base/reasoningSummary.ts). Explicit client summaries win; a
+    // bare top-level reasoning_effort gets a reasoning object.
+    injectResponsesReasoningSummary(
+      "gh",
+      model,
+      this.supportsResponsesEndpoint(model),
+      modifiedBody
+    );
 
     return modifiedBody;
   }
