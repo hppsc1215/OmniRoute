@@ -90,6 +90,24 @@ test("GHE: keeps explicit summary null (only undefined triggers injection)", () 
   assert.equal((out.reasoning as Record<string, unknown>).summary, null);
 });
 
+test("GHE: leaves reasoning null untouched (no crash, no injection)", () => {
+  const executor = new GheCopilotExecutor({
+    gheUrl: "https://ghe.company.com",
+    clientId: "test-client",
+    clientSecret: "test-secret",
+  });
+  const out = executor.transformRequest(
+    "ghe-copilot/gpt-5.6-luna",
+    bodyWith("gpt-5.6-luna", null, "xhigh"),
+    true,
+    gheCredentials
+  ) as Record<string, unknown>;
+  // null is falsy (first branch skipped) and !== undefined (else-if skipped):
+  // the reasoning field stays null, top-level effort is left intact.
+  assert.equal(out.reasoning, null);
+  assert.equal(out.reasoning_effort, "xhigh");
+});
+
 test("GHE: creates reasoning object from top-level reasoning_effort", () => {
   const executor = new GheCopilotExecutor({
     gheUrl: "https://ghe.company.com",
@@ -194,4 +212,18 @@ test("GH: leaves gemini models untouched", () => {
     {}
   ) as Record<string, unknown>;
   assert.equal((out.reasoning as Record<string, unknown>).summary, undefined);
+});
+
+test("GH: leaves reasoning null untouched (no crash, no injection)", () => {
+  const executor = new GithubExecutor();
+  const out = executor.transformRequest(
+    "gpt-5.4",
+    bodyWith("gpt-5.4", null, "xhigh"),
+    true,
+    {}
+  ) as Record<string, unknown>;
+  // null is falsy (first branch skipped) and !== undefined (else-if skipped):
+  // the reasoning field stays null, top-level effort is left intact.
+  assert.equal(out.reasoning, null);
+  assert.equal(out.reasoning_effort, "xhigh");
 });
