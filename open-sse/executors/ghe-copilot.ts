@@ -154,6 +154,15 @@ export class GheCopilotExecutor extends GithubExecutor {
           (reasoning as Record<string, unknown>).summary === undefined
         ) {
           (reasoning as Record<string, unknown>).summary = "concise";
+        } else if (record.reasoning === undefined && typeof record.reasoning_effort === "string") {
+          // Top-level `reasoning_effort` only (OpenAI-shaped bodies carry the
+          // effort this way): the /responses endpoint only honors a visible
+          // summary on the `reasoning` object, so create it from the top-level
+          // value. The top-level field is left intact — both forms are valid.
+          record.reasoning = {
+            effort: record.reasoning_effort,
+            summary: "concise",
+          };
         }
       }
     }

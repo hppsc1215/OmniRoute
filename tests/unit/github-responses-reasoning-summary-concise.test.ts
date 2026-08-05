@@ -11,14 +11,16 @@ import type ProviderCredentials from "../../open-sse/executors/base.ts";
  * Root cause (measured against a live GHE Copilot /responses endpoint,
  * gpt-5.6-luna): the upstream encrypts reasoning ("private reasoning")
  * unless the request opts into a visible summary via `reasoning.summary`.
- * `"auto"` leaves the choice to the model per reasoning block — most
- * blocks still come back encrypted, so the ENCRYPTED_REASONING_PLACEHOLDER
- * streams (the intermittent encrypted-message symptom). `"concise"`
- * forces a visible summary for every block (verified live: placeholder
- * deltas 0, real reasoning text streamed).
+ * `"auto"` leaves the choice to the model per reasoning block — most blocks
+ * come back encrypted, so the ENCRYPTED_REASONING_PLACEHOLDER streams
+ * (the intermittent encrypted-message symptom). `"concise"` forces a
+ * visible summary for every block (verified live: placeholder deltas 0,
+ * real reasoning text streamed).
  *
  * Fix: executors inject `reasoning.summary: "concise"` on the /responses
- * route when an effort is set but no explicit summary was provided.
+ * route when an effort is set but no explicit summary was provided — both
+ * for the `reasoning` object form and for the top-level `reasoning_effort`
+ * form (OpenAI-shaped bodies), where the object is created on the fly.
  */
 
 const gheCredentials: ProviderCredentials = {
@@ -73,6 +75,38 @@ test("GHE: keeps explicit client reasoning.summary (client wins)", () => {
   assert.equal((out.reasoning as Record<string, unknown>).summary, "hidden");
 });
 
+test("GHE: keeps explicit summary null (only undefined triggers injection)", () => {
+  const executor = new GheCopilotExecutor({
+    gheUrl: "https://ghe.company.com",
+    clientId: "test-client",
+    clientSecret: "test-secret",
+  });
+  const out = executor.transformRequest(
+    "ghe-copilot/gpt-5.6-luna",
+    bodyWith("gpt-5.6-luna", { effort: "high", summary: null }, "high"),
+    true,
+    gheCredentials
+  ) as Record<string, unknown>;
+  assert.equal((out.reasoning as Record<string, unknown>).summary, null);
+});
+
+test("GHE: creates reasoning object from top-level reasoning_effort", () => {
+  const executor = new GheCopilotExecutor({
+    gheUrl: "https://ghe.company.com",
+    clientId: "test-client",
+    clientSecret: "test-secret",
+  });
+  const out = executor.transformRequest(
+    "ghe-copilot/gpt-5.6-luna",
+    bodyWith("gpt-5.6-luna", undefined, "xhigh"),
+    true,
+    gheCredentials
+  ) as Record<string, unknown>;
+  assert.deepEqual(out.reasoning, { effort: "xhigh", summary: "concise" });
+  // top-level carrier is left intact — both forms are valid upstream
+  assert.equal(out.reasoning_effort, "xhigh");
+});
+
 test("GHE: leaves chat/completions (claude) models untouched", () => {
   const executor = new GheCopilotExecutor({
     gheUrl: "https://ghe.company.com",
@@ -85,27 +119,23 @@ test("GHE: leaves chat/completions (claude) models untouched", () => {
     true,
     gheCredentials
   ) as Record<string, unknown>;
-  // reasoning object survives but must NOT gain a summary (claude routes
-  // to /chat/completions, where the injection does not apply).
   assert.equal((out.reasoning as Record<string, unknown>).summary, undefined);
   assert.equal((out.reasoning as Record<string, unknown>).effort, "high");
 });
 
-test("GHE: leaves plain reasoning_effort top-level (no reasoning object) untouched", () => {
+test("GHE: leaves gemini models untouched", () => {
   const executor = new GheCopilotExecutor({
     gheUrl: "https://ghe.company.com",
     clientId: "test-client",
     clientSecret: "test-secret",
   });
   const out = executor.transformRequest(
-    "ghe-copilot/gpt-5.6-luna",
-    bodyWith("gpt-5.6-luna", undefined, "xhigh"),
+    "ghe-copilot/gemini-2.5-pro",
+    bodyWith("gemini-2.5-pro", { effort: "high" }),
     true,
     gheCredentials
   ) as Record<string, unknown>;
-  // No reasoning object existed; nothing to enrich (upstream already
-  // streams visible reasoning for the top-level chat-style field).
-  assert.equal(out.reasoning, undefined);
+  assert.equal((out.reasoning as Record<string, unknown>).summary, undefined);
 });
 
 // --- GitHub (gh) executor ----------------------------------------------
@@ -132,11 +162,34 @@ test("GH: injects reasoning.summary concise for codex model names", () => {
   assert.equal((out.reasoning as Record<string, unknown>).summary, "concise");
 });
 
+test("GH: creates reasoning object from top-level reasoning_effort", () => {
+  const executor = new GithubExecutor();
+  const out = executor.transformRequest(
+    "gpt-5.3-codex",
+    bodyWith("gpt-5.3-codex", undefined, "xhigh"),
+    true,
+    {}
+  ) as Record<string, unknown>;
+  assert.deepEqual(out.reasoning, { effort: "xhigh", summary: "concise" });
+  assert.equal(out.reasoning_effort, "xhigh");
+});
+
 test("GH: leaves claude models untouched", () => {
   const executor = new GithubExecutor();
   const out = executor.transformRequest(
     "claude-sonnet-4",
     bodyWith("claude-sonnet-4", { effort: "high" }),
+    true,
+    {}
+  ) as Record<string, unknown>;
+  assert.equal((out.reasoning as Record<string, unknown>).summary, undefined);
+});
+
+test("GH: leaves gemini models untouched", () => {
+  const executor = new GithubExecutor();
+  const out = executor.transformRequest(
+    "gemini-2.5-pro",
+    bodyWith("gemini-2.5-pro", { effort: "high" }),
     true,
     {}
   ) as Record<string, unknown>;
