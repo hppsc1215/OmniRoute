@@ -8,16 +8,16 @@ import type ProviderCredentials from "../../open-sse/executors/base.ts";
  * Regression tests: GitHub Copilot / GHE Copilot Responses-API reasoning
  * visibility.
  *
- * Root cause (measured against a live GHE Copilot /responses endpoint):
- * the upstream encrypts reasoning ("private reasoning") unless the request
- * opts into a visible summary via `reasoning.summary: "auto"`. OmniRoute's
- * effort normalization (#6241) folds a canonical `effort` field into BOTH
- * `reasoning_effort` AND `reasoning: { effort }` — and the Responses
- * endpoint honors the object form, which lacks the summary request, so it
- * returned only encrypted_content. The response translator then surfaced
- * the ENCRYPTED_REASONING_PLACEHOLDER instead of real thinking.
+ * Root cause (measured against a live GHE Copilot /responses endpoint,
+ * gpt-5.6-luna): the upstream encrypts reasoning ("private reasoning")
+ * unless the request opts into a visible summary via `reasoning.summary`.
+ * `"auto"` leaves the choice to the model per reasoning block — most
+ * blocks still come back encrypted, so the ENCRYPTED_REASONING_PLACEHOLDER
+ * streams (the intermittent encrypted-message symptom). `"concise"`
+ * forces a visible summary for every block (verified live: placeholder
+ * deltas 0, real reasoning text streamed).
  *
- * Fix: executors inject `reasoning.summary: "auto"` on the /responses
+ * Fix: executors inject `reasoning.summary: "concise"` on the /responses
  * route when an effort is set but no explicit summary was provided.
  */
 
@@ -40,9 +40,9 @@ function bodyWith(model: string, reasoning?: unknown, reasoningEffort?: string) 
   return body;
 }
 
-// --- GHE Copilot executor ---------------------------------------------
+// --- GHE Copilot executor ----------------------------------------------
 
-test("GHE: injects reasoning.summary auto for gpt-5.6-luna on /responses route", () => {
+test("GHE: injects reasoning.summary concise for gpt-5.6-luna on /responses route", () => {
   const executor = new GheCopilotExecutor({
     gheUrl: "https://ghe.company.com",
     clientId: "test-client",
@@ -54,7 +54,7 @@ test("GHE: injects reasoning.summary auto for gpt-5.6-luna on /responses route",
     true,
     gheCredentials
   ) as Record<string, unknown>;
-  assert.equal((out.reasoning as Record<string, unknown>).summary, "auto");
+  assert.equal((out.reasoning as Record<string, unknown>).summary, "concise");
   assert.equal((out.reasoning as Record<string, unknown>).effort, "xhigh");
 });
 
@@ -108,9 +108,9 @@ test("GHE: leaves plain reasoning_effort top-level (no reasoning object) untouch
   assert.equal(out.reasoning, undefined);
 });
 
-// --- GitHub (gh) executor ---------------------------------------------
+// --- GitHub (gh) executor ----------------------------------------------
 
-test("GH: injects reasoning.summary auto for gpt-5.4 (registry targetFormat)", () => {
+test("GH: injects reasoning.summary concise for gpt-5.4 (registry targetFormat)", () => {
   const executor = new GithubExecutor();
   const out = executor.transformRequest(
     "gpt-5.4",
@@ -118,10 +118,10 @@ test("GH: injects reasoning.summary auto for gpt-5.4 (registry targetFormat)", (
     true,
     {}
   ) as Record<string, unknown>;
-  assert.equal((out.reasoning as Record<string, unknown>).summary, "auto");
+  assert.equal((out.reasoning as Record<string, unknown>).summary, "concise");
 });
 
-test("GH: injects reasoning.summary auto for codex model names", () => {
+test("GH: injects reasoning.summary concise for codex model names", () => {
   const executor = new GithubExecutor();
   const out = executor.transformRequest(
     "gpt-5.3-codex",
@@ -129,7 +129,7 @@ test("GH: injects reasoning.summary auto for codex model names", () => {
     true,
     {}
   ) as Record<string, unknown>;
-  assert.equal((out.reasoning as Record<string, unknown>).summary, "auto");
+  assert.equal((out.reasoning as Record<string, unknown>).summary, "concise");
 });
 
 test("GH: leaves claude models untouched", () => {

@@ -186,9 +186,11 @@ export class GithubExecutor extends BaseExecutor {
     // Request visible reasoning summaries on the /responses route. GitHub
     // Copilot's Responses API encrypts reasoning ("private reasoning")
     // unless the request opts into a visible summary via
-    // `reasoning.summary: "auto"`. Without it the upstream returns only
-    // encrypted_content and OmniRoute can only surface the placeholder
-    // text instead of real thinking. Mirrors the buildUrl /responses gate
+    // `reasoning.summary: "concise"`. Measured against a live GHE Copilot
+    // /responses endpoint (gpt-5.6-luna): "auto" leaves the choice to the
+    // model per reasoning block — most blocks still come back encrypted,
+    // so the placeholder text streams intermittently. "concise" forces a
+    // visible summary for every block. Mirrors the buildUrl /responses gate
     // (targetFormat openai-responses or codex models, non-Claude/Gemini).
     // Chat/completions routes are untouched; explicit client summaries win.
     const responsesTargetFormat = getModelTargetFormat("gh", model);
@@ -207,7 +209,7 @@ export class GithubExecutor extends BaseExecutor {
         (reasoning as Record<string, unknown>).effort !== undefined &&
         (reasoning as Record<string, unknown>).summary === undefined
       ) {
-        (reasoning as Record<string, unknown>).summary = "auto";
+        (reasoning as Record<string, unknown>).summary = "concise";
       }
     }
 
