@@ -11,16 +11,18 @@ import type { ProviderCredentials } from "../../open-sse/executors/base.ts";
  * Root cause (measured against a live GHE Copilot /responses endpoint,
  * gpt-5.6-luna): the upstream encrypts reasoning ("private reasoning")
  * unless the request opts into a visible summary via `reasoning.summary`.
- * `"auto"` leaves the choice to the model per reasoning block — most blocks
- * come back encrypted, so the ENCRYPTED_REASONING_PLACEHOLDER streams
- * (the intermittent encrypted-message symptom). `"concise"` forces a
- * visible summary for every block (verified live: placeholder deltas 0,
- * real reasoning text streamed).
+ * Measured visibility: "concise" 51 chars, "auto" 457, "detailed" 960 — in
+ * every mode exactly one of two reasoning items stays encrypted (upstream
+ * design, never recoverable by a proxy).
  *
- * Fix: executors inject `reasoning.summary: "concise"` on the /responses
- * route when an effort is set but no explicit summary was provided — both
- * for the `reasoning` object form and for the top-level `reasoning_effort`
- * form (OpenAI-shaped bodies), where the object is created on the fly.
+ * Fix: executors inject `reasoning.summary` on the /responses route when an
+ * effort is set but no explicit summary was provided — both for the
+ * `reasoning` object form and for the top-level `reasoning_effort` form
+ * (OpenAI-shaped bodies), where the object is created on the fly. The injected
+ * value is `OMNIROUTE_RESPONSES_REASONING_SUMMARY` (default "concise"); invalid
+ * values fall back to the default. Default "concise" is asserted in the default
+ * tests; override behavior is covered by dedicated tests that set/restore the
+ * env var.
  */
 
 const gheCredentials: ProviderCredentials = {
@@ -226,4 +228,67 @@ test("GH: leaves reasoning null untouched (no crash, no injection)", () => {
   // the reasoning field stays null, top-level effort is left intact.
   assert.equal(out.reasoning, null);
   assert.equal(out.reasoning_effort, "xhigh");
+});
+
+// --- OMNIROUTE_RESPONSES_REASONING_SUMMARY override ---------------------
+
+const SUMMARY_ENV = "OMNIROUTE_RESPONSES_REASONING_SUMMARY";
+
+function withSummaryEnv(value: string | undefined, fn: () => void) {
+  const previous = process.env[SUMMARY_ENV];
+  try {
+    if (value === undefined) delete process.env[SUMMARY_ENV];
+    else process.env[SUMMARY_ENV] = value;
+    fn();
+  } finally {
+    if (previous === undefined) delete process.env[SUMMARY_ENV];
+    else process.env[SUMMARY_ENV] = previous;
+  }
+}
+
+test("GHE: env override OMNIROUTE_RESPONSES_REASONING_SUMMARY=detailed wins over default", () => {
+  withSummaryEnv("detailed", () => {
+    const executor = new GheCopilotExecutor({
+      gheUrl: "https://ghe.company.com",
+      clientId: "test-client",
+      clientSecret: "test-secret",
+    });
+    const out = executor.transformRequest(
+      "ghe-copilot/gpt-5.6-luna",
+      bodyWith("gpt-5.6-luna", { effort: "xhigh" }, "xhigh"),
+      true,
+      gheCredentials
+    ) as Record<string, unknown>;
+    assert.equal((out.reasoning as Record<string, unknown>).summary, "detailed");
+  });
+});
+
+test("GH: env override OMNIROUTE_RESPONSES_REASONING_SUMMARY=auto applies to codex models", () => {
+  withSummaryEnv("auto", () => {
+    const executor = new GithubExecutor();
+    const out = executor.transformRequest(
+      "gpt-5.3-codex",
+      bodyWith("gpt-5.3-codex", undefined, "xhigh"),
+      true,
+      {}
+    ) as Record<string, unknown>;
+    assert.deepEqual(out.reasoning, { effort: "xhigh", summary: "auto" });
+  });
+});
+
+test("GHE: invalid env override falls back to default concise (no upstream 400)", () => {
+  withSummaryEnv("banana", () => {
+    const executor = new GheCopilotExecutor({
+      gheUrl: "https://ghe.company.com",
+      clientId: "test-client",
+      clientSecret: "test-secret",
+    });
+    const out = executor.transformRequest(
+      "ghe-copilot/gpt-5.6-luna",
+      bodyWith("gpt-5.6-luna", undefined, "xhigh"),
+      true,
+      gheCredentials
+    ) as Record<string, unknown>;
+    assert.equal((out.reasoning as Record<string, unknown>).summary, "concise");
+  });
 });
