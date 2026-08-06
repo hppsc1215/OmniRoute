@@ -37,13 +37,15 @@ export function getResponsesReasoningSummaryOverride(): ResponsesReasoningSummar
  *
  * GitHub Copilot's Responses API encrypts reasoning ("private reasoning")
  * unless the request opts into a visible summary via `reasoning.summary`.
- * Measured against a live GHE Copilot /responses endpoint (gpt-5.6-luna):
- * "concise" yields 51 chars of visible summary text, "auto" 457, "detailed"
- * 960 — in all modes exactly one of two reasoning items remains encrypted
- * (upstream design, never recoverable by a proxy). The injected value comes
- * from the `OMNIROUTE_RESPONSES_REASONING_SUMMARY` env override, defaulting to
- * "concise"; invalid values fall back to the default (upstream rejects bogus
- * summary values with HTTP 400 `unsupported_value`).
+ * Measured live against the deployed GHE Copilot /responses endpoint
+ * (gpt-5.6-luna) via `response.reasoning_summary_text.delta` events:
+ * "concise" ~5.3k visible chars, "detailed" ~34.8k (≈6.6× more). The
+ * reasoning items themselves still carry `encrypted_content` (upstream
+ * design — bound to item/organization, never recoverable by a proxy); the
+ * visible text is the separately streamed summary deltas. The injected value
+ * comes from the `OMNIROUTE_RESPONSES_REASONING_SUMMARY` env override,
+ * defaulting to "concise"; invalid values fall back to the default (upstream
+ * rejects bogus summary values with HTTP 400 `unsupported_value`).
  *
  * Mirrors the buildUrl /responses gate: fires only when the registry marks the
  * model targetFormat "openai-responses" or the id matches /codex/i, and the
