@@ -66,6 +66,20 @@ function getProjectHeaderValue(body: unknown): string | null {
   return project;
 }
 
+/**
+ * Per-connection opt-out for the `x-goog-user-project` header. Some accounts
+ * (e.g. the shared `aicode-consumers` project) always answer 403 when the header
+ * is present, which costs one wasted upstream send per request before the
+ * header-less retry. Default stays on so custom GCP projects keep working.
+ */
+export function shouldSendProjectHeader(
+  credentials: AntigravityProfileCredentials | null | undefined
+): boolean {
+  const data = credentials?.providerSpecificData;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return true;
+  return data.sendProjectHeader !== false;
+}
+
 /** Apply the selected official client identity to a Cloud Code content request. */
 export function applyAntigravityClientProfileHeaders(
   headers: Record<string, string>,
@@ -81,7 +95,7 @@ export function applyAntigravityClientProfileHeaders(
     removeHeaderCaseInsensitive(headers, name);
   }
 
-  const project = getProjectHeaderValue(body);
+  const project = shouldSendProjectHeader(credentials) ? getProjectHeaderValue(body) : null;
   removeHeaderCaseInsensitive(headers, "x-goog-user-project");
   if (project) {
     headers["x-goog-user-project"] = project;

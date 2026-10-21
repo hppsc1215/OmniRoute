@@ -1,0 +1,1 @@
+- **feat(antigravity):** Per-connection toggle "Send project header (x-goog-user-project)" in the connection settings. Disabling it skips the header for accounts whose project always answers 403 with it (e.g. the shared `aicode-consumers` project), removing one wasted upstream send per request. Default stays on; the project id is still sent in the request body.

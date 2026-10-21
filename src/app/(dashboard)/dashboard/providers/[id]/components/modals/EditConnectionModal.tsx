@@ -10,10 +10,7 @@ import {
   isClaudeCodeCompatibleProvider,
   providerAllowsOptionalApiKey,
 } from "@/shared/constants/providers";
-import {
-  ANTIGRAVITY_CLIENT_PROFILE_OPTIONS,
-  normalizeAntigravityClientProfileSetting,
-} from "@/shared/constants/antigravityClientProfile";
+import { normalizeAntigravityClientProfileSetting } from "@/shared/constants/antigravityClientProfile";
 import { parseExtraApiKeys } from "@/shared/utils/parseApiKeys";
 import { providerHasFreeModels } from "@/shared/utils/freeModels";
 import { maskEmail } from "@/shared/utils/maskEmail";
@@ -57,6 +54,7 @@ import {
   claudeConnectionFieldValues,
 } from "./claudeConnectionFieldValues";
 import { CodexConnectionFields } from "./CodexFingerprintFields";
+import { AntigravityConnectionFields } from "./AntigravityConnectionFields";
 import { assignEditApiKeyProviderSpecificData } from "./connectionProviderSpecificData";
 import { isM365TierCapableProvider, normalizeM365TierValue, type M365TierValue } from "./m365Tier";
 import ProviderTierField from "./ProviderTierField";
@@ -156,6 +154,7 @@ export default function EditConnectionModal({
     ccCompatibleSummarizeThinking: false,
     cloudCodeProjectId: "",
     antigravityClientProfile: "ide",
+    antigravitySendProjectHeader: connectionProviderSpecificData?.sendProjectHeader !== false,
     ...claudeConnectionFieldValues(provider, connectionProviderSpecificData),
     passthroughModels: connectionProviderSpecificData?.passthroughModels === true,
     disableCooling: connectionProviderSpecificData?.disableCooling === true,
@@ -394,6 +393,7 @@ export default function EditConnectionModal({
         antigravityClientProfile: normalizeAntigravityClientProfileSetting(
           connection.providerSpecificData?.clientProfile
         ),
+        antigravitySendProjectHeader: connection.providerSpecificData?.sendProjectHeader !== false,
         ...claudeConnectionFieldValues(effectiveProvider, connection.providerSpecificData),
         passthroughModels: connection?.providerSpecificData?.passthroughModels === true,
         disableCooling: connection?.providerSpecificData?.disableCooling === true,
@@ -716,6 +716,9 @@ export default function EditConnectionModal({
           clientProfile: normalizeAntigravityClientProfileSetting(
             formData.antigravityClientProfile
           ),
+          // Default (true) is stored as absent so untouched connections keep the
+          // historical behavior; only an explicit opt-out is persisted.
+          sendProjectHeader: formData.antigravitySendProjectHeader === false ? false : undefined,
           // A manually-entered project id must not be overwritten by
           // auto-discovery (loadCodeAssist) on later token refreshes. This
           // merge is the single surviving write of providerSpecificData for
@@ -890,28 +893,13 @@ export default function EditConnectionModal({
           editMode
         />
         {isAntigravityFamily && (
-          <div className="flex flex-col gap-4 rounded-lg border border-border/50 bg-surface/20 p-4">
-            <Select
-              label={t("antigravityClientProfileLabel")}
-              value={formData.antigravityClientProfile}
-              options={ANTIGRAVITY_CLIENT_PROFILE_OPTIONS.map((option) => ({
-                value: option.value,
-                label: t(option.labelKey),
-              }))}
-              onChange={(e) =>
-                setFormData({ ...formData, antigravityClientProfile: e.target.value })
-              }
-              hint={t("antigravityClientProfileHint")}
-            />
-            <Input
-              label={t("antigravityProjectIdLabel")}
-              value={formData.cloudCodeProjectId}
-              onChange={(e) => setFormData({ ...formData, cloudCodeProjectId: e.target.value })}
-              placeholder={t("antigravityProjectIdPlaceholder")}
-              hint={t("antigravityProjectIdHint")}
-              className="font-mono text-xs"
-            />
-          </div>
+          <AntigravityConnectionFields
+            t={t}
+            clientProfile={formData.antigravityClientProfile}
+            projectId={formData.cloudCodeProjectId}
+            sendProjectHeader={formData.antigravitySendProjectHeader}
+            onChange={(patch) => setFormData({ ...formData, ...patch })}
+          />
         )}
         {isOAuth && connection.email && (
           <div className="bg-sidebar/50 p-3 rounded-lg">
