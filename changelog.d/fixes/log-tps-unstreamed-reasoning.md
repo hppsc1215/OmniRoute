@@ -1,0 +1,1 @@
+- **fix(logs):** Request-log tok/s no longer explodes for thinking models whose reasoning is metered but never streamed (e.g. Antigravity/Gemini). TTFT already contains that thinking time, so `duration - TTFT` collapsed to a few ms (410 tok / 36 ms ≈ 11,389 tok/s); such rows now divide by the full duration (≈ 74 tok/s).
