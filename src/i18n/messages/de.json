@@ -6307,6 +6307,8 @@
     "apiKeyWarningAlertTitle": "API-Schlüsselwarnung",
     "googlePseInfo": "Informationen zu Google PSE",
     "antigravityProjectIdHint": "Optionale Überschreibung für Antigravity Cloud Code-Anfragen. Lassen Sie das Feld leer, um das während Google OAuth erkannte Projekt zu verwenden.",
+    "antigravitySendProjectHeaderLabel": "Projekt-Header senden (x-goog-user-project)",
+    "antigravitySendProjectHeaderDescription": "Deaktivieren, wenn jeder Request zuerst mit 403 scheitert (z. B. beim geteilten Projekt aicode-consumers). Spart pro Request einen unnötigen Upstream-Call; die Projekt-ID wird weiterhin im Request-Body gesendet.",
     "antigravityClientProfileLabel": "Client-Profil",
     "antigravityClientProfileHint": "Wählen Sie, welche Antigravity-Client-Identität OmniRoute der API übermittelt.",
     "antigravityClientProfileIde": "IDE",

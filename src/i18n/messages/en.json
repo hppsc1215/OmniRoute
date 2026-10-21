@@ -6384,6 +6384,8 @@
     "apiKeyWarningAlertTitle": "API Key Warning",
     "googlePseInfo": "Google Pse Info",
     "antigravityProjectIdHint": "Optional override for Antigravity Cloud Code requests. Leave blank to use the project discovered during Google OAuth.",
+    "antigravitySendProjectHeaderLabel": "Send project header (x-goog-user-project)",
+    "antigravitySendProjectHeaderDescription": "Disable when every request first fails with 403 (e.g. the shared aicode-consumers project). Saves one wasted upstream call per request; the project id is still sent in the request body.",
     "antigravityClientProfileLabel": "Client profile",
     "antigravityClientProfileHint": "Choose which Antigravity client identity OmniRoute presents to the API.",
     "antigravityClientProfileIde": "IDE",

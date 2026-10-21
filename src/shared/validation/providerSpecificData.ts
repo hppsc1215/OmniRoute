@@ -616,6 +616,19 @@ export function validateProviderSpecificData(
     }
   }
 
+  const sendProjectHeader = data.sendProjectHeader;
+  if (
+    sendProjectHeader !== undefined &&
+    sendProjectHeader !== null &&
+    typeof sendProjectHeader !== "boolean"
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "providerSpecificData.sendProjectHeader must be a boolean",
+      path: ["sendProjectHeader"],
+    });
+  }
+
   const newApiAggregatorBalance = data.newApiAggregatorBalance;
   if (
     newApiAggregatorBalance !== undefined &&

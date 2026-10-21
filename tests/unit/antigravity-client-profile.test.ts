@@ -139,6 +139,53 @@ test("content headers omit x-goog-user-project for the aicode-consumers default 
   assert.equal(headers["x-goog-user-project"], undefined);
 });
 
+function applyWithProviderData(
+  providerSpecificData: Record<string, unknown>
+): Record<string, string> {
+  const headers: Record<string, string> = { "x-goog-user-project": "stale-project" };
+  applyAntigravityClientProfileHeaders(
+    headers,
+    { connectionId: "connection-project-header", providerSpecificData },
+    { project: "project-1" }
+  );
+  return headers;
+}
+
+test("x-goog-user-project is sent by default and when sendProjectHeader is true", () => {
+  assert.equal(applyWithProviderData({})["x-goog-user-project"], "project-1");
+  assert.equal(
+    applyWithProviderData({ sendProjectHeader: true })["x-goog-user-project"],
+    "project-1"
+  );
+});
+
+test("sendProjectHeader=false omits x-goog-user-project but keeps body project untouched", () => {
+  const body = { project: "project-1" };
+  const headers: Record<string, string> = { "X-Goog-User-Project": "stale-project" };
+  applyAntigravityClientProfileHeaders(
+    headers,
+    { connectionId: "connection-no-header", providerSpecificData: { sendProjectHeader: false } },
+    body
+  );
+  assert.equal(new Headers(headers).get("x-goog-user-project"), null);
+  assert.equal(body.project, "project-1");
+});
+
+test("provider-specific validation accepts only boolean sendProjectHeader", () => {
+  const validate = (value: unknown) => {
+    const messages: string[] = [];
+    const ctx = {
+      addIssue: (issue: { message: string }) => messages.push(issue.message),
+    } as unknown as Parameters<typeof validateProviderSpecificData>[1];
+    validateProviderSpecificData({ sendProjectHeader: value }, ctx);
+    return messages;
+  };
+  assert.deepEqual(validate(true), []);
+  assert.deepEqual(validate(false), []);
+  assert.deepEqual(validate(undefined), []);
+  assert.deepEqual(validate("false"), ["providerSpecificData.sendProjectHeader must be a boolean"]);
+});
+
 test("public request envelopes never infer the internal jetski identity from email", () => {
   assert.equal(getAntigravityEnvelopeUserAgent({ email: "user@gmail.com" }), "antigravity");
   assert.equal(getAntigravityEnvelopeUserAgent({ email: "user@company.example" }), "antigravity");
