@@ -97,7 +97,13 @@ function getLogTotalTokens(log) {
 
 // #13130: generation-time TPS (duration - TTFT, reasoning-aware); see logTps.ts.
 function getLogTps(log): number {
-  return computeLogTps(log?.tokens?.out, log?.tokens?.reasoning, log?.duration, log?.ttft);
+  return computeLogTps(
+    log?.tokens?.out,
+    log?.tokens?.reasoning,
+    log?.duration,
+    log?.ttft,
+    log?.reasoningChars ?? null
+  );
 }
 
 function getCacheSourceMeta(cacheSource: unknown) {

@@ -41,6 +41,33 @@ export function resolveGenerationMs(
   return duration;
 }
 
+/**
+ * Time window for TPS. Generation time (duration - TTFT) is only correct when
+ * the tokens were produced AFTER TTFT. Providers that meter thinking tokens in
+ * usage but never stream them (e.g. Antigravity/Gemini: `reasoning_chars` NULL
+ * or 0) generate all reasoning BEFORE the first visible chunk, so TTFT already
+ * contains that work and duration - TTFT collapses to a few ms (observed
+ * 410 tok / 36 ms = 11,389 tok/s). In that case use the full duration.
+ *
+ * `reasoningChars === undefined` means the caller has no observation at all;
+ * it keeps the historical generation-time behavior unchanged.
+ */
+export function resolveTpsWindowMs(
+  durationMs: number | null | undefined,
+  ttftMs: number | null | undefined,
+  tokensReasoning: number | null | undefined,
+  reasoningChars: number | null | undefined
+): number | null {
+  if (reasoningChars !== undefined && nonNegative(tokensReasoning) > 0) {
+    const streamedReasoning = nonNegative(reasoningChars) > 0;
+    if (!streamedReasoning) {
+      const duration = nonNegative(durationMs);
+      return duration > 0 ? duration : null;
+    }
+  }
+  return resolveGenerationMs(durationMs, ttftMs);
+}
+
 /** Best available output-token count for TPS: never double-counts reasoning (#13130). */
 export function resolveTpsOutputTokens(
   tokensOut: number | null | undefined,
@@ -58,10 +85,11 @@ export function computeLogTps(
   tokensOut: number | null | undefined,
   tokensReasoning: number | null | undefined,
   durationMs: number | null | undefined,
-  ttftMs?: number | null | undefined
+  ttftMs?: number | null | undefined,
+  reasoningChars?: number | null | undefined
 ): number {
   const tokens = resolveTpsOutputTokens(tokensOut, tokensReasoning);
-  const generationMs = resolveGenerationMs(durationMs, ttftMs);
+  const generationMs = resolveTpsWindowMs(durationMs, ttftMs, tokensReasoning, reasoningChars);
   if (tokens <= 0 || generationMs === null || generationMs <= 0) return 0;
   return tokens / (generationMs / 1000);
 }
@@ -84,7 +112,12 @@ export function computeLogE2eTps(
  * dependency-free.
  */
 export function buildLogTpsTitle(
-  log: { duration?: number | null; ttft?: number | null; tokens?: { reasoning?: number | null } },
+  log: {
+    duration?: number | null;
+    ttft?: number | null;
+    tokens?: { reasoning?: number | null };
+    reasoningChars?: number | null;
+  },
   tps: number,
   formatDuration: (ms: number) => string
 ): string {
@@ -92,7 +125,12 @@ export function buildLogTpsTitle(
   if (typeof log?.ttft === "number" && log.ttft > 0) {
     parts.push(`TTFT ${formatDuration(log.ttft)}`);
   }
-  const genMs = resolveGenerationMs(log?.duration, log?.ttft);
+  const genMs = resolveTpsWindowMs(
+    log?.duration,
+    log?.ttft,
+    log?.tokens?.reasoning,
+    log?.reasoningChars
+  );
   if (genMs != null && genMs !== log?.duration) {
     parts.push(`generation ${(genMs / 1000).toFixed(1)}s`);
   }
