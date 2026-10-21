@@ -94,6 +94,27 @@ export function computeLogTps(
   return tokens / (generationMs / 1000);
 }
 
+/** TPS for one request-log row shape (`tokens`, `duration`, `ttft`, `reasoningChars`). */
+export function computeLogRowTps(
+  log:
+    | {
+        duration?: number | null;
+        ttft?: number | null;
+        tokens?: { out?: number | null; reasoning?: number | null } | null;
+        reasoningChars?: number | null;
+      }
+    | null
+    | undefined
+): number {
+  return computeLogTps(
+    log?.tokens?.out,
+    log?.tokens?.reasoning,
+    log?.duration,
+    log?.ttft,
+    log?.reasoningChars ?? null
+  );
+}
+
 /**
  * Tooltip for the TPS cell (#13130): exposes the generation-time breakdown so
  * thinking-model rows (long TTFT / prefill) explain why their TPS differs from

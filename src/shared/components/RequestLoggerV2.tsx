@@ -29,7 +29,7 @@ import {
 } from "@/shared/utils/formatting";
 import { getProviderDisplayLabel } from "@/shared/utils/providerDisplayLabel";
 import { mergeLogFilterOptions } from "@/shared/utils/logFilterOptions";
-import { buildLogTpsTitle, computeLogTps } from "@/shared/utils/logTps";
+import { buildLogTpsTitle, computeLogRowTps } from "@/shared/utils/logTps";
 import useEmailPrivacyStore from "@/store/emailPrivacyStore";
 import {
   computeLogsSignature,
@@ -74,13 +74,7 @@ function getLogTotalTokens(log) {
 
 // #13130: generation-time TPS (duration - TTFT, reasoning-aware); see logTps.ts.
 function getLogTps(log): number {
-  return computeLogTps(
-    log?.tokens?.out,
-    log?.tokens?.reasoning,
-    log?.duration,
-    log?.ttft,
-    log?.reasoningChars ?? null
-  );
+  return computeLogRowTps(log);
 }
 
 function formatTps(tps: number): string {

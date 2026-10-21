@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   buildLogTpsTitle,
+  computeLogRowTps,
   computeLogTps,
   resolveTpsWindowMs,
 } from "../../src/shared/utils/logTps.ts";
@@ -46,6 +47,17 @@ test("callers that do not pass reasoningChars keep the historical behavior", () 
   assert.equal(resolveTpsWindowMs(5521, 5485, 380, undefined), 36);
   const legacy = computeLogTps(410, 380, 5521, 5485);
   assert.ok(legacy > 10_000, "legacy 4-arg call must stay unchanged");
+});
+
+test("computeLogRowTps reads the request-log row shape (missing reasoningChars = not streamed)", () => {
+  const row = {
+    duration: GEMINI_ROW.duration,
+    ttft: GEMINI_ROW.ttft,
+    tokens: { out: GEMINI_ROW.out, reasoning: GEMINI_ROW.reasoning },
+  };
+  const tps = computeLogRowTps(row);
+  assert.ok(Math.abs(tps - 410 / 5.521) < 0.01, `got ${tps}`);
+  assert.equal(computeLogRowTps(null), 0);
 });
 
 test("tooltip does not claim a generation window for unstreamed reasoning", () => {
