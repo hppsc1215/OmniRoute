@@ -19,6 +19,30 @@ export type PendingKiroWrapperToolCall = {
   inputObject?: Record<string, unknown>;
 };
 
+function toolSpecsDeclare(tools: unknown, toolName: string): boolean {
+  if (!Array.isArray(tools)) return false;
+  return tools.some((tool) => {
+    const spec = (tool as JsonRecord | null)?.toolSpecification as JsonRecord | undefined;
+    return typeof spec?.name === "string" && spec.name === toolName;
+  });
+}
+
+/**
+ * True when the translated Kiro request body declares a client tool named `toolName`
+ * (in `currentMessage` or any history turn's `userInputMessageContext.tools`).
+ */
+export function kiroRequestDeclaresTool(body: unknown, toolName: string): boolean {
+  const state = (body as JsonRecord | null)?.conversationState as JsonRecord | undefined;
+  if (!state) return false;
+  const messages: unknown[] = [state.currentMessage];
+  if (Array.isArray(state.history)) messages.push(...state.history);
+  return messages.some((message) => {
+    const userInput = (message as JsonRecord | null)?.userInputMessage as JsonRecord | undefined;
+    const context = userInput?.userInputMessageContext as JsonRecord | undefined;
+    return toolSpecsDeclare(context?.tools, toolName);
+  });
+}
+
 export function parseKiroToolInput(toolInput: unknown): unknown {
   if (typeof toolInput !== "string") return toolInput;
   try {

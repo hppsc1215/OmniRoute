@@ -1,0 +1,1 @@
+- **fix(kiro):** skip nested MCP wrapper validation when the client itself declares a function named `tool_call` (e.g. Hermes' deferred-tool dispatcher), which previously aborted every such call with `missing nested MCP tool name at input.name`.

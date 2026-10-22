@@ -280,3 +280,64 @@ test("Kiro stream errors become Responses response.failed events", async () => {
   assert.match(text, /missing nested MCP tool name/);
   assert.doesNotMatch(text, /response\.output_item\.added/);
 });
+
+test("Kiro passes through a client-declared tool_call function without wrapper validation", async () => {
+  const executor = new KiroExecutor();
+  const clientArgs = { calls: [{ name: "openseo_keyword_ideas", arguments: { seed: "router" } }] };
+  const response = buildEventStreamResponse([
+    encodeEventFrame("toolUseEvent", { toolUseId: "client_1", name: "tool_call" }),
+    encodeEventFrame("toolUseEvent", {
+      toolUseId: "client_1",
+      name: "tool_call",
+      input: JSON.stringify(clientArgs),
+    }),
+    encodeEventFrame("messageStopEvent", {}),
+  ]);
+
+  const text = await executor
+    .transformEventStreamToSSE(response, "kiro-model", { clientDefinesToolCall: true })
+    .text();
+
+  assert.doesNotMatch(text, /invalid_kiro_tool_call/);
+  assert.match(text, /"name":"tool_call"/);
+  assert.match(text, /openseo_keyword_ideas/);
+  assert.match(text, /data: \[DONE\]/);
+});
+
+test("kiroRequestDeclaresTool finds tool specs in current message and history", async () => {
+  const { kiroRequestDeclaresTool } =
+    await import("../../open-sse/executors/kiroToolCallValidation.ts");
+  const withTools = (names: string[]) => ({
+    userInputMessage: {
+      userInputMessageContext: { tools: names.map((name) => ({ toolSpecification: { name } })) },
+    },
+  });
+
+  assert.equal(
+    kiroRequestDeclaresTool(
+      { conversationState: { currentMessage: withTools(["read_file", "tool_call"]) } },
+      "tool_call"
+    ),
+    true
+  );
+  assert.equal(
+    kiroRequestDeclaresTool(
+      {
+        conversationState: {
+          currentMessage: { userInputMessage: { content: "hi" } },
+          history: [withTools(["tool_call"])],
+        },
+      },
+      "tool_call"
+    ),
+    true
+  );
+  assert.equal(
+    kiroRequestDeclaresTool(
+      { conversationState: { currentMessage: withTools(["read_file"]) } },
+      "tool_call"
+    ),
+    false
+  );
+  assert.equal(kiroRequestDeclaresTool(undefined, "tool_call"), false);
+});
