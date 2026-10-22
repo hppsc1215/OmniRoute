@@ -27,6 +27,7 @@ import {
   encodeSse,
   getBufferedKiroToolInput,
   validateKiroToolCallWrapperInput,
+  kiroRequestDeclaresTool,
   validateKiroToolName,
   validateKiroToolUse,
   type PendingKiroWrapperToolCall,
@@ -447,8 +448,14 @@ export class KiroExecutor extends BaseExecutor {
         )?.userInputMessage as Record<string, unknown>
       )?.content as string) || "";
     const thinkingExpected = userContent.includes("<thinking_mode>enabled</thinking_mode>");
+    // A client may declare its own function literally named `tool_call` (e.g. Hermes'
+    // deferred-tool dispatcher with a `{ calls: [...] }` schema). That collides with Kiro's
+    // nested MCP wrapper name; in that case the call belongs to the client and must not be
+    // validated against the wrapper `{ name, arguments }` shape.
+    const clientDefinesToolCall = kiroRequestDeclaresTool(tb, KIRO_TOOL_CALL_WRAPPER);
     const transformedResponse = this.transformEventStreamToSSE(response, model, {
       thinkingExpected,
+      clientDefinesToolCall,
     });
 
     return { response: transformedResponse, url, headers, transformedBody };
@@ -471,7 +478,15 @@ export class KiroExecutor extends BaseExecutor {
   transformEventStreamToSSE(
     response: Response,
     model: string,
-    opts: { thinkingExpected?: boolean } = {}
+    opts: {
+      thinkingExpected?: boolean;
+      /**
+       * When true, the client declared its own `tool_call` function, so `tool_call`
+       * tool uses are passed through like any other tool instead of being validated as
+       * Kiro's nested MCP wrapper.
+       */
+      clientDefinesToolCall?: boolean;
+    } = {}
   ) {
     const thinkingExpected = !!opts.thinkingExpected;
     const buffer = new ByteQueue();
@@ -831,7 +846,7 @@ export class KiroExecutor extends BaseExecutor {
                 const toolCallId = getToolCallId(singleToolUse);
                 const toolInput = singleToolUse.input;
 
-                if (toolName === KIRO_TOOL_CALL_WRAPPER) {
+                if (toolName === KIRO_TOOL_CALL_WRAPPER && !opts.clientDefinesToolCall) {
                   let pending = state.pendingWrapperToolCalls.get(toolCallId);
                   if (!pending) {
                     if (state.seenToolIds.has(toolCallId)) {
