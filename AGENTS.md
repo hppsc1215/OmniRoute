@@ -6,6 +6,45 @@
 > and point back here. When a rule needs to change, change it HERE — never re-fork it into an
 > assistant-specific file.
 
+## Fork Workflow (hppsc1215/OmniRoute) — READ FIRST
+
+This checkout is a **long-lived fork**, not a plain upstream clone. Remotes: `origin` = `hppsc1215/OmniRoute`
+(fork), `private` = `hppsc1215/omniroute-private`, `upstream` = `diegosouzapw/OmniRoute`.
+
+- **Main line is `custom`.** Develop and deploy from it. New work: branch off `custom`, merge back with
+  `--no-ff`. Never force-push `custom`. `main` is a stale upstream name; do not use it.
+- **Upstream's default is the moving `release/vX.Y.Z` branch**, not `main` (`upstream/main` is thousands of
+  commits behind). Sync from release tags/branches only.
+- **Syncing upstream (only on demand, final tags or fixes we need):**
+  ```bash
+  git fetch upstream --tags
+  git checkout -b sync/vX.Y.Z custom
+  git merge vX.Y.Z               # merge, NOT rebase / cherry-pick; rerere is enabled
+  # resolve conflicts, then: build + focused tests + gates
+  git checkout custom && git merge --no-ff sync/vX.Y.Z
+  ```
+  Expect conflicts in `package.json`, `CHANGELOG`/changelog fragments and this file. Run
+  `git config rerere.enabled true` in fresh clones.
+- **Keep fork changes easy to merge:** prefer new files over edits to upstream-owned files; keep this
+  section short and in one place; avoid own DB migrations (upstream numbers them sequentially — a collision
+  breaks startup). New UI strings must exist in all locale files or rely on fallbacks.
+- **Upstream PRs:** fixes meant for upstream live on a separate small branch based on the matching
+  `upstream/release/vX.Y.Z` (not on `custom`). **Never open an upstream PR without the user's explicit OK
+  in that same turn.** Pushing branches to the fork, commits and local builds/tests need no extra OK.
+- **Deploy:** Docker Compose in `~/.docker/compose/omniroute/`, image `omniroute:web`
+  (`docker build --target runner-web -t omniroute:web .`, `--build-arg OMNIROUTE_BUILD_MEMORY_MB=11264`).
+  Re-create containers ONLY with `docker compose down && docker compose up -d` in a single command
+  (agents may run through this gateway; a bare `down` kills them). No `docker run`/`restart`/`rm -sf`.
+  Tag the deployed commit as `deploy-YYYYMMDD` and keep the previous image as `omniroute:web-rollback-*`.
+  Server code runs compiled from `/app/.build/next` — verify deploys via
+  `docker exec omniroute grep -rlF <symbol> /app/.build/next`, not by diffing sources.
+- **Fork-only changes on `custom` (vs. upstream):** Kiro client `tool_call` collision fix; per-connection
+  Antigravity toggle to omit `x-goog-user-project`; tp/s computed over full duration when reasoning is
+  metered but not streamed; build fixes (frontmatter titles in two provider docs, feature-flag DB layer out
+  of the Cursor catalog client bundle). Update this list when adding or dropping fork-only changes.
+
+---
+
 ## Quick Start
 
 ```bash
