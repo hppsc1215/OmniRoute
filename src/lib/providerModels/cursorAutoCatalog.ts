@@ -5,7 +5,6 @@
  */
 
 import { GROK_47_EFFORTS } from "@omniroute/open-sse/config/providers/registry/cursor/grok47.ts";
-import { isCursorGrok47MaxEffortDropped } from "@omniroute/open-sse/utils/cursorAgentProtobuf/grok47MaxEffort.ts";
 
 export type CursorAutoCatalogEntry = {
   id: string;
@@ -65,12 +64,13 @@ function oneMillionDisplayName(name: string): string {
 /** Expose selectable names only when Grok 4.7 itself is available upstream. */
 export function ensureCursorGrokEffortAliases<
   T extends CursorAutoCatalogEntry & { supportedThinkingEfforts?: string[] },
->(models: T[]): T[] {
+>(models: T[], dropMaxEffort = false): T[] {
   const base = models.find((model) => model.id === "grok-4.7");
   if (!base) return models;
-  const tiers: readonly string[] = isCursorGrok47MaxEffortDropped()
-    ? GROK_47_EFFORTS
-    : GROK_47_FALLBACK_EFFORT_TIERS;
+  // The CURSOR_GROK_47_DROP_MAX_EFFORT flag is resolved by the server-side caller and passed
+  // in: this module is also bundled into client components, which must not pull in the
+  // feature-flag/DB layer (fs, child_process via sharp).
+  const tiers: readonly string[] = dropMaxEffort ? GROK_47_EFFORTS : GROK_47_FALLBACK_EFFORT_TIERS;
   const allowed =
     base.supportedThinkingEfforts === undefined
       ? tiers

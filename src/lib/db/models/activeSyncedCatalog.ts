@@ -14,6 +14,7 @@ import {
   getSyncedAvailableModelsByConnection,
   type SyncedAvailableModel,
 } from "../models";
+import { isCursorGrok47MaxEffortDropped } from "@omniroute/open-sse/utils/cursorAgentProtobuf/grok47MaxEffort.ts";
 import { normalizeSyncedAvailableModels } from "./synced";
 import { getRawProviderConnections } from "../providers";
 import { isSyncedAtFresh } from "./syncedCatalogFreshness";
@@ -147,7 +148,9 @@ export function enrichCursorCatalog(
   if (models.length === 0) return models;
   if (providerId !== "cursor" && providerId !== "cursor-api") return models;
   const withAuto = ensureCursorAutoCatalogEntry(models);
-  return includeEffortAliases ? ensureCursorGrokEffortAliases(withAuto) : withAuto;
+  return includeEffortAliases
+    ? ensureCursorGrokEffortAliases(withAuto, isCursorGrok47MaxEffortDropped())
+    : withAuto;
 }
 
 /**
