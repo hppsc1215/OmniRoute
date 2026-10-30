@@ -8,6 +8,7 @@ type ThroughputLog = {
   duration?: number | null;
   ttft?: number | null;
   tokens?: { out?: number | null; reasoning?: number | null };
+  reasoningChars?: number | null;
 };
 
 function formatRate(rate: number): string {
@@ -18,7 +19,15 @@ function formatRate(rate: number): string {
 /** Both rates share a numerator; only the observed delivery window changes. */
 export default function RequestLogThroughput({ log }: { log: ThroughputLog }) {
   const t = useTranslations("requestLogger");
-  const generation = computeLogTps(log.tokens?.out, log.tokens?.reasoning, log.duration, log.ttft);
+  // reasoningChars lets computeLogTps fall back to the full duration when reasoning
+  // was metered but never streamed (TTFT then already contains the thinking time).
+  const generation = computeLogTps(
+    log.tokens?.out,
+    log.tokens?.reasoning,
+    log.duration,
+    log.ttft,
+    log.reasoningChars ?? null
+  );
   const e2e = computeLogE2eTps(log.tokens?.out, log.tokens?.reasoning, log.duration);
   const generationLabel = t("throughputPostFirstToken");
   const e2eLabel = t("throughputEndToEnd");
