@@ -28,6 +28,7 @@ import {
   parseAutoDecision,
   type CopilotAutoDecision,
 } from "./github/autoModel.ts";
+import { pinCopilotResponsesItemIds } from "./github/responsesItemIds.ts";
 
 /** Correlation-id fallback for runtimes without crypto.randomUUID — still CSPRNG-backed. */
 function randomIdFallback(): string {
@@ -323,6 +324,11 @@ export class GithubExecutor extends BaseExecutor {
     // arm has nothing to materialize, which is what the existing `!result.response`
     // guard already meant.
     if (result instanceof Response || !result?.response) return result;
+
+    // Copilot rotates the item id on every /responses event; without pinning, each
+    // final snapshot re-emits the whole answer. Runs before the non-stream drain below
+    // because GHE forces stream:true upstream for every request.
+    result.response = pinCopilotResponsesItemIds(result.response, result.url);
 
     if (!input.stream) {
       // wreq-js clone/text semantics consume the original response body. Materialize
