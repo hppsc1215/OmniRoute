@@ -87,6 +87,8 @@ export type CompatModelRow = {
   endpointCapabilitySource?: string;
   normalizeToolCallId?: boolean;
   preserveOpenAIDeveloperRole?: boolean;
+  /** Gemini 3.8+: force thinkingConfig.includeThoughts (compat override only). */
+  includeThoughts?: boolean;
   isHidden?: boolean;
   /** #12172: per-modality visibility overrides (`{ chat: true }`) — see `isHiddenForModality`. */
   hiddenModalities?: Record<string, boolean>;

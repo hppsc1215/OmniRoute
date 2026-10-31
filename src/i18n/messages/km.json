@@ -5980,6 +5980,8 @@
     "compatAdjustmentsTitle": "ភាពឆបគ្នា",
     "compatButtonLabel": "ភាពឆបគ្នា",
     "compatToolIdShort": "លេខសម្គាល់ឧបករណ៍ 9",
+    "compatIncludeThoughtsShort": "Include thoughts",
+    "compatIncludeThoughtsLabel": "Always request Gemini thoughts (includeThoughts) for this model, on every protocol. Thoughts stream early and keep long non-streaming calls alive behind relays; they count against max output tokens.",
     "compatDeveloperShort": "តួនាទីអ្នកអភិវឌ្ឍន៍",
     "compatDoNotPreserveDeveloper": "កុំរក្សាទុកតួនាទីអ្នកអភិវឌ្ឍន៍",
     "compatBadgeNoPreserve": "មិនរក្សាទុក",

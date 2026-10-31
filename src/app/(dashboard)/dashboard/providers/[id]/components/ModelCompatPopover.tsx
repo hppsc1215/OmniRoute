@@ -8,7 +8,10 @@ import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react
 import { createPortal } from "react-dom";
 import { Input as KitInput } from "@omniroute/ui-kit/input";
 import { Button, Input, Select, Toggle } from "@/shared/components";
-import { MODEL_COMPAT_PROTOCOL_KEYS } from "@/shared/constants/modelCompat";
+import {
+  MODEL_COMPAT_PROTOCOL_KEYS,
+  supportsIncludeThoughtsToggle,
+} from "@/shared/constants/modelCompat";
 import {
   upstreamHeadersRecordsEqual,
   UPSTREAM_HEADERS_UI_MAX,
@@ -131,6 +134,9 @@ export interface ModelCompatPopoverProps {
     }
   ) => void;
   showDeveloperToggle?: boolean;
+  /** Model-level (protocol-independent) includeThoughts override; Gemini providers only. */
+  includeThoughts?: boolean;
+  onIncludeThoughtsChange?: (enabled: boolean) => void;
   compact?: boolean;
   disabled?: boolean;
 }
@@ -148,6 +154,8 @@ export default function ModelCompatPopover({
   getUpstreamHeadersRecord,
   onCompatPatch,
   showDeveloperToggle = true,
+  includeThoughts = false,
+  onIncludeThoughtsChange,
   compact = false,
   disabled,
 }: ModelCompatPopoverProps) {
@@ -594,6 +602,20 @@ export default function ModelCompatPopover({
                     onChange={(checked) =>
                       onCompatPatch(protocol, { preserveOpenAIDeveloperRole: !checked })
                     }
+                    disabled={disabled}
+                  />
+                )}
+                {onIncludeThoughtsChange && supportsIncludeThoughtsToggle(providerId) && (
+                  <Toggle
+                    size="sm"
+                    label={providerText(t, "compatIncludeThoughtsShort", "Include thoughts")}
+                    title={providerText(
+                      t,
+                      "compatIncludeThoughtsLabel",
+                      "Always request Gemini thoughts (includeThoughts) for this model, on every protocol. Thoughts stream early and keep long non-streaming calls alive behind relays; they count against max output tokens."
+                    )}
+                    checked={includeThoughts}
+                    onChange={(v) => onIncludeThoughtsChange(v)}
                     disabled={disabled}
                   />
                 )}

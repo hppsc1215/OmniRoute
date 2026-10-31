@@ -250,6 +250,7 @@ export async function PUT(request) {
       targetFormat,
       normalizeToolCallId,
       preserveOpenAIDeveloperRole,
+      includeThoughts,
       upstreamHeaders,
       compatByProtocol,
       contextWindowOverride,
@@ -260,6 +261,29 @@ export async function PUT(request) {
     } = validation.data;
 
     const raw = rawBody as Record<string, unknown>;
+
+    // includeThoughts is a model-level compat flag stored only in modelCompatOverrides,
+    // so toggling it never turns a built-in/synced model into a manual custom model.
+    if ("includeThoughts" in raw) {
+      const knownProvider =
+        Object.prototype.hasOwnProperty.call(AI_PROVIDERS as Record<string, unknown>, provider) ||
+        isOpenAICompatibleProvider(provider) ||
+        isAnthropicCompatibleProvider(provider);
+      if (!knownProvider) {
+        return Response.json(
+          { error: { message: "Unknown provider", type: "validation_error" } },
+          { status: 400 }
+        );
+      }
+      mergeModelCompatOverride(provider, modelId, { includeThoughts: includeThoughts ?? null });
+      const otherKeys = Object.keys(raw).filter(
+        (k) => !["provider", "modelId", "includeThoughts"].includes(k)
+      );
+      if (otherKeys.length === 0) {
+        return Response.json({ ok: true, modelCompatOverrides: getModelCompatOverrides(provider) });
+      }
+    }
+
     const updates: Record<string, unknown> = {};
     if ("modelName" in raw) updates.modelName = modelName;
     if ("apiFormat" in raw) updates.apiFormat = apiFormat;
@@ -320,6 +344,7 @@ export async function PUT(request) {
             "apiFormat",
             "targetFormat",
             "supportsVision",
+            "includeThoughts",
           ].includes(k)
         ) &&
         ("normalizeToolCallId" in raw ||

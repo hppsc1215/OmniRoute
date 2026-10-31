@@ -112,6 +112,12 @@ export type ModelCompatOverride = {
   normalizeToolCallId?: boolean;
   preserveOpenAIDeveloperRole?: boolean;
   preserveVideoUrl?: boolean;
+  /**
+   * Gemini 3.8+/Antigravity: force `thinkingConfig.includeThoughts: true` even when the
+   * client sends an explicit reasoning effort. Thoughts then stream early, which keeps
+   * long non-streaming calls from idling past relay timeouts. Thoughts share maxOutputTokens.
+   */
+  includeThoughts?: boolean;
   compatByProtocol?: CompatByProtocolMap;
   upstreamHeaders?: Record<string, string>;
   isHidden?: boolean;
@@ -269,6 +275,8 @@ export type ModelCompatPatch = {
   normalizeToolCallId?: boolean;
   preserveOpenAIDeveloperRole?: boolean | null;
   preserveVideoUrl?: boolean | null;
+  /** `null` clears the override (back to the translator default). */
+  includeThoughts?: boolean | null;
   compatByProtocol?: CompatByProtocolMap;
   /** Replace top-level extra headers for override-only rows; omit to leave unchanged. */
   upstreamHeaders?: Record<string, string> | null;
@@ -320,6 +328,13 @@ export function mergeModelCompatOverride(
       next.preserveVideoUrl = Boolean(patch.preserveVideoUrl);
     }
   }
+  if ("includeThoughts" in patch) {
+    if (patch.includeThoughts === null) {
+      delete next.includeThoughts;
+    } else {
+      next.includeThoughts = Boolean(patch.includeThoughts);
+    }
+  }
   if (patch.compatByProtocol && Object.keys(patch.compatByProtocol).length > 0) {
     const merged = deepMergeCompatByProtocol(next.compatByProtocol, patch.compatByProtocol);
     if (compatByProtocolHasEntries(merged)) next.compatByProtocol = merged;
@@ -337,6 +352,7 @@ export function mergeModelCompatOverride(
   const filtered = list.filter((e) => e.id !== modelId);
   const hasPreserveFlag = Object.prototype.hasOwnProperty.call(next, "preserveOpenAIDeveloperRole");
   const hasVideoUrlFlag = Object.prototype.hasOwnProperty.call(next, "preserveVideoUrl");
+  const hasIncludeThoughtsFlag = Object.prototype.hasOwnProperty.call(next, "includeThoughts");
   const hasTopUpstream = next.upstreamHeaders && Object.keys(next.upstreamHeaders).length > 0;
   if ("isHidden" in patch) {
     const modality = typeof patch.modality === "string" && patch.modality ? patch.modality : null;
@@ -386,6 +402,7 @@ export function mergeModelCompatOverride(
     next.normalizeToolCallId ||
     hasPreserveFlag ||
     hasVideoUrlFlag ||
+    hasIncludeThoughtsFlag ||
     hasHiddenFlag ||
     hasApiFormat ||
     hasTargetFormat ||

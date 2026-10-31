@@ -33,6 +33,7 @@ export type ModelCompatSavePatch = {
   normalizeToolCallId?: boolean;
   preserveOpenAIDeveloperRole?: boolean;
   upstreamHeaders?: Record<string, string>;
+  includeThoughts?: boolean;
   compatByProtocol?: Record<
     string,
     {
@@ -261,6 +262,7 @@ export interface ModelRowProps {
   showDeveloperToggle?: boolean;
   effectiveModelNormalize: (modelId: string, protocol?: string) => boolean;
   effectiveModelPreserveDeveloper: (modelId: string, protocol?: string) => boolean;
+  effectiveModelIncludeThoughts?: (modelId: string) => boolean;
   saveModelCompatFlags: (modelId: string, patch: ModelCompatSavePatch) => void;
   getUpstreamHeadersRecord: (protocol: string) => Record<string, string>;
   compatDisabled?: boolean;
@@ -286,6 +288,7 @@ export default function ModelRow({
   showDeveloperToggle = true,
   effectiveModelNormalize,
   effectiveModelPreserveDeveloper,
+  effectiveModelIncludeThoughts,
   getUpstreamHeadersRecord,
   saveModelCompatFlags,
   compatDisabled,
@@ -489,6 +492,12 @@ export default function ModelRow({
               saveModelCompatFlags(model.id, { compatByProtocol: { [protocol]: payload } })
             }
             showDeveloperToggle={showDeveloperToggle}
+            includeThoughts={effectiveModelIncludeThoughts?.(model.id) ?? false}
+            onIncludeThoughtsChange={
+              effectiveModelIncludeThoughts
+                ? (enabled) => saveModelCompatFlags(model.id, { includeThoughts: enabled })
+                : undefined
+            }
             disabled={compatDisabled}
           />
         </div>

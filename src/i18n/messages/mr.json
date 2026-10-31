@@ -5903,6 +5903,8 @@
     "compatAdjustmentsTitle": "सुसंगतता",
     "compatButtonLabel": "सुसंगतता",
     "compatToolIdShort": "टूल ID 9",
+    "compatIncludeThoughtsShort": "Include thoughts",
+    "compatIncludeThoughtsLabel": "Always request Gemini thoughts (includeThoughts) for this model, on every protocol. Thoughts stream early and keep long non-streaming calls alive behind relays; they count against max output tokens.",
     "compatDeveloperShort": "डेव्हलपर भूमिका",
     "compatDoNotPreserveDeveloper": "डेव्हलपर भूमिका कायम ठेवू नका",
     "compatBadgeNoPreserve": "कायम ठेवू नका",

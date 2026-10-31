@@ -5903,6 +5903,8 @@
     "compatAdjustmentsTitle": "호환성",
     "compatButtonLabel": "호환성",
     "compatToolIdShort": "도구 ID 9",
+    "compatIncludeThoughtsShort": "Include thoughts",
+    "compatIncludeThoughtsLabel": "Always request Gemini thoughts (includeThoughts) for this model, on every protocol. Thoughts stream early and keep long non-streaming calls alive behind relays; they count against max output tokens.",
     "compatDeveloperShort": "개발자 역할",
     "compatDoNotPreserveDeveloper": "개발자 역할 유지 안 함",
     "compatBadgeNoPreserve": "유지 안 함",

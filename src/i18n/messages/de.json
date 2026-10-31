@@ -5903,6 +5903,8 @@
     "compatAdjustmentsTitle": "Kompatibilität",
     "compatButtonLabel": "Kompatibilität",
     "compatToolIdShort": "Tool-ID 9",
+    "compatIncludeThoughtsShort": "Gedanken anfordern",
+    "compatIncludeThoughtsLabel": "Gemini-Gedanken (includeThoughts) für dieses Modell immer anfordern, für jedes Protokoll. Gedanken werden früh gestreamt und halten lange Nicht-Streaming-Aufrufe hinter Relays am Leben; sie zählen gegen die maximalen Output-Tokens.",
     "compatDeveloperShort": "Entwicklerrolle",
     "compatDoNotPreserveDeveloper": "Entwicklerrolle nicht beibehalten",
     "compatBadgeNoPreserve": "Nicht beibehalten",

@@ -5980,6 +5980,8 @@
     "compatAdjustmentsTitle": "Compatibilidade",
     "compatButtonLabel": "Compatibilidade",
     "compatToolIdShort": "ID da ferramenta 9",
+    "compatIncludeThoughtsShort": "Include thoughts",
+    "compatIncludeThoughtsLabel": "Always request Gemini thoughts (includeThoughts) for this model, on every protocol. Thoughts stream early and keep long non-streaming calls alive behind relays; they count against max output tokens.",
     "compatDeveloperShort": "Role de developer",
     "compatDoNotPreserveDeveloper": "Não preservar role de developer",
     "compatBadgeNoPreserve": "Sem preservar",
