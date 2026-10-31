@@ -1,0 +1,1 @@
+- **fix(resilience):** saving "Request Queue & Rate" in the dashboard no longer fails with `requestQueue: Unrecognized key: "globalConcurrentRequests"` — the strict `requestQueueSettingsSchema` now accepts the global upstream concurrency cap added by hierarchical admission (#7778), bounded 0–100000 like the normalizer (0 = disabled)

@@ -43,6 +43,9 @@ export const requestQueueSettingsSchema = z
     requestsPerMinute: z.number().int().min(1).optional(),
     minTimeBetweenRequestsMs: z.number().int().min(0).optional(),
     concurrentRequests: z.number().int().min(1).optional(),
+    // Global upstream concurrency cap (hierarchical admission, #7778). The dashboard
+    // always sends it; 0 = disabled. Bounds mirror normalizeRequestQueueSettings().
+    globalConcurrentRequests: z.number().int().min(0).max(100_000).optional(),
     // 0 is an explicit "disable the queue-wait budget" sentinel (see
     // src/lib/resilience/settings/normalize.ts maxWaitMs) — do not clamp it up to 1.
     maxWaitMs: z.number().int().min(0).optional(),
