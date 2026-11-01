@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Card, Button, ModelSelectModal, ManualConfigModal } from "@/shared/components";
 import Image from "next/image";
+import Icon from "@/shared/components/Icon";
 import CliStatusBadge from "./CliStatusBadge";
 import { useTranslations } from "next-intl";
 import { DEFAULT_DISPLAY_BASE_URL } from "@/shared/hooks";
@@ -261,8 +262,8 @@ function PiCardHeader({ tool, t, isExpanded, onToggle, statusBadge }) {
               }}
             />
           ) : (
-            <span className="material-symbols-outlined text-xl" style={{ color: tool.color }}>
-              terminal
+            <span className="inline-flex shrink-0" style={{ color: tool.color }}>
+              <Icon name="terminal" size={20} />
             </span>
           )}
         </div>
@@ -274,11 +275,11 @@ function PiCardHeader({ tool, t, isExpanded, onToggle, statusBadge }) {
           <p className="text-xs text-text-muted truncate">{t("toolDescriptions.pi")}</p>
         </div>
       </div>
-      <span
-        className={`material-symbols-outlined text-text-muted text-[20px] transition-transform ${isExpanded ? "rotate-180" : ""}`}
-      >
-        expand_more
-      </span>
+      <Icon
+        name="expand_more"
+        size={20}
+        className={`text-text-muted transition-transform ${isExpanded ? "rotate-180" : ""}`}
+      />
     </div>
   );
 }
@@ -293,11 +294,11 @@ function runtimeHeadline(t, piStatus, cliReady) {
 function PiRuntimeStatus({ t, piStatus, cliReady }) {
   return (
     <div className="flex items-start gap-3 p-3 rounded-lg border bg-bg-secondary/50 border-border">
-      <span
-        className={`material-symbols-outlined text-lg ${cliReady ? "text-green-500" : "text-yellow-500"}`}
-      >
-        {cliReady ? "check_circle" : "warning"}
-      </span>
+      <Icon
+        name={cliReady ? "check_circle" : "warning"}
+        size={18}
+        className={cliReady ? "text-green-500" : "text-yellow-500"}
+      />
       <div className="flex flex-col gap-1">
         <p className="text-sm font-medium">{runtimeHeadline(t, piStatus, cliReady)}</p>
         {piStatus.commandPath && (
@@ -339,7 +340,7 @@ function PiInstallHint({ t }) {
 function PiConfigErrorNotice({ t, configError }) {
   return (
     <div className="flex items-start gap-3 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
-      <span className="material-symbols-outlined text-red-500 text-lg">error</span>
+      <Icon name="error" size={18} className="text-red-500" />
       <div className="flex flex-col gap-1">
         <p className="text-sm text-red-600 dark:text-red-400">{t("piConfigInvalidTitle")}</p>
         <p className="text-xs text-text-muted">{configError}</p>
@@ -351,7 +352,7 @@ function PiConfigErrorNotice({ t, configError }) {
 function PiConfiguredNotice({ t, piStatus }) {
   return (
     <div className="flex items-start gap-3 p-3 bg-green-500/10 border border-green-500/30 rounded-lg">
-      <span className="material-symbols-outlined text-green-500 text-lg">check_circle</span>
+      <Icon name="check_circle" size={18} className="text-green-500" />
       <div className="flex flex-col gap-1">
         <p className="text-sm text-green-700 dark:text-green-300">{t("piOmnirouteConfigured")}</p>
         <p className="text-xs text-text-muted">
@@ -404,7 +405,7 @@ function PiModelField({ t, selectedModel, onChange, onPick, onManual, hasActiveP
           {t("select")}
         </Button>
         <Button variant="ghost" size="sm" onClick={onManual}>
-          <span className="material-symbols-outlined text-[16px]">edit</span>
+          <Icon name="edit" size={16} />
           {t("manualConfig")}
         </Button>
       </div>
@@ -448,7 +449,7 @@ function PiActionButtons({ t, configured, canReset, selectedModel, actions, onAp
         disabled={!selectedModel}
         loading={actions.applying}
       >
-        <span className="material-symbols-outlined text-[14px] mr-1">save</span>
+        <Icon name="save" size={14} className="mr-1" />
         {configured ? t("updateConfig") : t("applyConfig")}
       </Button>
       {canReset && (
@@ -458,7 +459,7 @@ function PiActionButtons({ t, configured, canReset, selectedModel, actions, onAp
           onClick={actions.handleReset}
           loading={actions.restoring}
         >
-          <span className="material-symbols-outlined text-[14px] mr-1">restart_alt</span>
+          <Icon name="restart_alt" size={14} className="mr-1" />
           {t("reset")}
         </Button>
       )}
@@ -472,9 +473,7 @@ function PiMessageBanner({ message }) {
     <div
       className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${success ? "bg-green-500/10 text-green-600" : "bg-red-500/10 text-red-600"}`}
     >
-      <span className="material-symbols-outlined text-[16px]">
-        {success ? "check_circle" : "error"}
-      </span>
+      <Icon name={success ? "check_circle" : "error"} size={16} />
       <span className={message.containerEphemeralTarget ? "whitespace-pre-line" : ""}>
         {message.text}
       </span>
@@ -522,12 +521,12 @@ function PiBackupsSection({ t, backups, restoringBackup, onRestore, showBackups,
         onClick={() => setShowBackups(!showBackups)}
         className="flex items-center gap-2 text-sm text-text-muted hover:text-text transition-colors"
       >
-        <span
-          className={`material-symbols-outlined text-[16px] transition-transform ${showBackups ? "rotate-90" : ""}`}
-        >
-          chevron_right
-        </span>
-        <span className="material-symbols-outlined text-[16px]">backup</span>
+        <Icon
+          name="chevron_right"
+          size={16}
+          className={`transition-transform ${showBackups ? "rotate-90" : ""}`}
+        />
+        <Icon name="backup" size={16} />
         {t("backups")} {backups.length > 0 && `(${backups.length})`}
       </button>
       {showBackups && backups.length > 0 && (
@@ -604,9 +603,7 @@ function PiExpandedBody({ card }) {
     <div className="mt-6 pt-6 border-t border-border">
       {checkingPi && (
         <div className="flex items-center gap-2 text-text-muted text-sm">
-          <span className="material-symbols-outlined animate-spin text-base">
-            progress_activity
-          </span>
+          <Icon name="progress_activity" size={16} className="animate-spin" />
           <span>{t("checkingCli", { tool: "Pi" })}</span>
         </div>
       )}

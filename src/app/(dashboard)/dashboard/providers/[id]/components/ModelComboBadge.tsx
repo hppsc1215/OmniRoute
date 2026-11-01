@@ -11,6 +11,8 @@
 
 import Link from "next/link";
 
+import Icon from "@/shared/components/Icon";
+
 import { providerText, type ProviderMessageTranslator } from "../providerPageHelpers";
 
 export interface ModelComboBadgeProps {
@@ -39,7 +41,7 @@ export default function ModelComboBadge({ combos, t }: ModelComboBadgeProps) {
             combo: name,
           })}
         >
-          <span className="material-symbols-outlined text-[10px] leading-none">layers</span>
+          <Icon name="layers" size={10} className="shrink-0" />
           {name}
         </Link>
       ))}

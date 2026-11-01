@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Icon from "@/shared/components/Icon";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 
@@ -66,7 +67,7 @@ export default function UnpricedUsageBanner() {
           : "border-amber-300 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 text-amber-900 dark:text-amber-200"
       }`}
     >
-      <span className="material-symbols-outlined text-[18px] shrink-0 mt-0.5">price_change</span>
+      <Icon name="price_change" size={18} className="shrink-0 mt-0.5" />
       <div className="flex-1 min-w-0">
         <p className="font-semibold">{t("unpricedUsageTitle", { count: report.models.length })}</p>
         {(failClosed || countAsZero) && (
