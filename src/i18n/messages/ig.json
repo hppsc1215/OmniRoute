@@ -5903,6 +5903,8 @@
     "compatAdjustmentsTitle": "Ndakọrịta",
     "compatButtonLabel": "Ndakọrịta",
     "compatToolIdShort": "NJ ngwaọrụ 9",
+    "compatIncludeThoughtsShort": "Include thoughts",
+    "compatIncludeThoughtsLabel": "Always request Gemini thoughts (includeThoughts) for this model, on every protocol. Thoughts stream early and keep long non-streaming calls alive behind relays; they count against max output tokens.",
     "compatDeveloperShort": "Ọrụ onye nrụpụta",
     "compatDoNotPreserveDeveloper": "Edebela ọrụ onye nrụpụta",
     "compatBadgeNoPreserve": "Edebela",

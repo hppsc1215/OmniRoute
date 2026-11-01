@@ -855,6 +855,7 @@ export default function ProviderDetailPageClient() {
             handleTestAll={handleTestAll}
             effectiveModelNormalize={effectiveModelNormalize}
             effectiveModelPreserveDeveloper={effectiveModelPreserveDeveloper}
+            effectiveModelIncludeThoughts={compat.effectiveModelIncludeThoughts}
             effectiveModelHidden={effectiveModelHidden}
             getUpstreamHeadersRecordForModel={getUpstreamHeadersRecordForModel}
             t={t}

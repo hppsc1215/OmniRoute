@@ -7,3 +7,10 @@
 export const MODEL_COMPAT_PROTOCOL_KEYS = ["openai", "openai-responses", "claude"] as const;
 
 export type ModelCompatProtocolKey = (typeof MODEL_COMPAT_PROTOCOL_KEYS)[number];
+
+/** Providers whose Gemini translator honors the per-model `includeThoughts` compat flag. */
+export const INCLUDE_THOUGHTS_PROVIDERS = ["antigravity", "agy", "gemini"] as const;
+
+export function supportsIncludeThoughtsToggle(providerId: string): boolean {
+  return (INCLUDE_THOUGHTS_PROVIDERS as readonly string[]).includes(providerId);
+}

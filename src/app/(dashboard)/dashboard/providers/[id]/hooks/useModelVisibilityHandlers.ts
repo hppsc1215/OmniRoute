@@ -44,6 +44,7 @@ export interface ModelCompatSavePatch {
   upstreamHeaders?: Record<string, string>;
   compatByProtocol?: CompatByProtocolMap;
   isHidden?: boolean;
+  includeThoughts?: boolean;
 }
 
 export interface UseModelVisibilityHandlersParams {
@@ -143,7 +144,10 @@ export function useModelVisibilityHandlers({
         patch.preserveOpenAIDeveloperRole === undefined &&
         !("upstreamHeaders" in patch);
 
-      if (c) {
+      if ("includeThoughts" in patch && Object.keys(patch).length === 1) {
+        // Model-level flag stored only as a compat override (never creates a custom row).
+        body = { provider: providerId, modelId, includeThoughts: patch.includeThoughts };
+      } else if (c) {
         if (onlyCompatByProtocol) {
           body = {
             provider: providerId,

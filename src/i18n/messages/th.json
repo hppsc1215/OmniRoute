@@ -5903,6 +5903,8 @@
     "compatAdjustmentsTitle": "ความเข้ากันได้",
     "compatButtonLabel": "ความเข้ากันได้",
     "compatToolIdShort": "ID เครื่องมือ 9 อักขระ",
+    "compatIncludeThoughtsShort": "Include thoughts",
+    "compatIncludeThoughtsLabel": "Always request Gemini thoughts (includeThoughts) for this model, on every protocol. Thoughts stream early and keep long non-streaming calls alive behind relays; they count against max output tokens.",
     "compatDeveloperShort": "บทบาท developer",
     "compatDoNotPreserveDeveloper": "ไม่คงบทบาท developer ไว้",
     "compatBadgeNoPreserve": "ไม่คงไว้",

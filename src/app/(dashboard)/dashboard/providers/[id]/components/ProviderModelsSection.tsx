@@ -122,6 +122,7 @@ export interface ProviderModelsSectionProps {
   // Compat state (from useModelCompatState)
   effectiveModelNormalize: (modelId: string, protocol?: string) => boolean;
   effectiveModelPreserveDeveloper: (modelId: string, protocol?: string) => boolean;
+  effectiveModelIncludeThoughts?: (modelId: string) => boolean;
   effectiveModelHidden: (modelId: string) => boolean;
   getUpstreamHeadersRecordForModel: (modelId: string, protocol: string) => Record<string, string>;
 
@@ -189,6 +190,7 @@ export default function ProviderModelsSection({
   handleTestAll,
   effectiveModelNormalize,
   effectiveModelPreserveDeveloper,
+  effectiveModelIncludeThoughts,
   effectiveModelHidden,
   getUpstreamHeadersRecordForModel,
   t,
@@ -570,6 +572,7 @@ export default function ProviderModelsSection({
               showDeveloperToggle
               effectiveModelNormalize={effectiveModelNormalize}
               effectiveModelPreserveDeveloper={effectiveModelPreserveDeveloper}
+              effectiveModelIncludeThoughts={effectiveModelIncludeThoughts}
               getUpstreamHeadersRecord={(p) => getUpstreamHeadersRecordForModel(model.id, p)}
               saveModelCompatFlags={saveModelCompatFlags}
               compatDisabled={compatSavingModelId === model.id}

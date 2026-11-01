@@ -5980,6 +5980,8 @@
     "compatAdjustmentsTitle": "Kompatibbiltà",
     "compatButtonLabel": "Kompatibbiltà",
     "compatToolIdShort": "ID tal-Għodda 9",
+    "compatIncludeThoughtsShort": "Include thoughts",
+    "compatIncludeThoughtsLabel": "Always request Gemini thoughts (includeThoughts) for this model, on every protocol. Thoughts stream early and keep long non-streaming calls alive behind relays; they count against max output tokens.",
     "compatDeveloperShort": "Rwol tal-iżviluppatur",
     "compatDoNotPreserveDeveloper": "Tippreservax ir-rwol tal-iżviluppatur",
     "compatBadgeNoPreserve": "Tippreservax",

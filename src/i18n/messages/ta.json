@@ -5903,6 +5903,8 @@
     "compatAdjustmentsTitle": "இணக்கத்தன்மை",
     "compatButtonLabel": "இணக்கத்தன்மை",
     "compatToolIdShort": "கருவி ID 9",
+    "compatIncludeThoughtsShort": "Include thoughts",
+    "compatIncludeThoughtsLabel": "Always request Gemini thoughts (includeThoughts) for this model, on every protocol. Thoughts stream early and keep long non-streaming calls alive behind relays; they count against max output tokens.",
     "compatDeveloperShort": "developer பங்கு",
     "compatDoNotPreserveDeveloper": "developer பங்கைத் தக்கவைக்க வேண்டாம்",
     "compatBadgeNoPreserve": "தக்கவைக்க வேண்டாம்",

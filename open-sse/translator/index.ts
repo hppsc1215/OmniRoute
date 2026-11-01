@@ -33,6 +33,7 @@ import { hasThinkingConfig, normalizeThinkingConfig } from "../services/provider
 import { applyThinkingBudget } from "../services/thinkingBudget.ts";
 import { applyReasoningRuleDirective } from "@/lib/reasoningRouting/policy";
 import { getModelPreserveVideoUrl } from "@/lib/db/models/modelPreserveVideoUrl";
+import { getModelIncludeThoughts } from "@/lib/db/models/modelIncludeThoughts";
 import { getResolvedModelCapabilities, supportsReasoning } from "../services/modelCapabilities.ts";
 import { normalizeRoles, resolvePreserveDeveloperRole } from "../services/roleNormalizer.ts";
 import { hoistLeadingSystemMessage } from "./helpers/strictSystemHoist.ts";
@@ -404,6 +405,23 @@ export function translateRequest(
   // Explicit reasoning-routing policies are final. The marker is internal and is
   // consumed here before any provider translation can see it.
   result = applyReasoningRuleDirective(result);
+  // Per-model compat override: force Gemini thoughts upstream. The Gemini/Antigravity
+  // translators read the client `include_thoughts` hint (gemini38ThinkingConfig).
+  // Applied right before the target translator runs, because source→openai translators
+  // (e.g. Claude) rebuild the body and would drop a hint set any earlier. Thoughts stream
+  // early, which keeps long non-streaming calls from idling past relay timeouts.
+  const forceIncludeThoughts =
+    (targetFormat === FORMATS.ANTIGRAVITY || targetFormat === FORMATS.GEMINI) &&
+    getModelIncludeThoughts(normalizedProvider, normalizedModel) === true;
+  const clientIncludeThoughts = (result as Record<string, unknown> | null)?.include_thoughts;
+  const withIncludeThoughts = <T>(target: T): T =>
+    forceIncludeThoughts &&
+    clientIncludeThoughts === undefined &&
+    target &&
+    typeof target === "object" &&
+    (target as Record<string, unknown>).include_thoughts === undefined
+      ? ({ ...(target as Record<string, unknown>), include_thoughts: true } as T)
+      : target;
 
   // Normalize thinking config: remove if lastMessage is not user
   normalizeThinkingConfig(result);
@@ -528,7 +546,7 @@ export function translateRequest(
                 : {}),
             }
           : credentials;
-      result = directTranslator(model, result, stream, directCredentials);
+      result = directTranslator(model, withIncludeThoughts(result), stream, directCredentials);
     } else {
       // Fallback: hub-and-spoke via OpenAI
       // Step 1: source -> openai (if source is not openai)
@@ -639,7 +657,12 @@ export function translateRequest(
           // #7936 seam then gets null and namespace sub-tool calls come back
           // flattened, which Codex rejects with `unsupported call: <name>`.
           const identityMap = (result as Record<string, unknown>)._namespaceToolIdentityMap;
-          const translated = fromOpenAI(model, result, stream, translationCredentials);
+          const translated = fromOpenAI(
+            model,
+            withIncludeThoughts(result),
+            stream,
+            translationCredentials
+          );
           if (
             identityMap instanceof Map &&
             translated &&

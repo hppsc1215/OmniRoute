@@ -5903,6 +5903,8 @@
     "compatAdjustmentsTitle": "ගැළපුම",
     "compatButtonLabel": "ගැළපුම",
     "compatToolIdShort": "මෙවලම් ID 9",
+    "compatIncludeThoughtsShort": "Include thoughts",
+    "compatIncludeThoughtsLabel": "Always request Gemini thoughts (includeThoughts) for this model, on every protocol. Thoughts stream early and keep long non-streaming calls alive behind relays; they count against max output tokens.",
     "compatDeveloperShort": "සංවර්ධක භූමිකාව",
     "compatDoNotPreserveDeveloper": "සංවර්ධක භූමිකාව සුරැක නොගන්න",
     "compatBadgeNoPreserve": "සුරැකීම නැත",

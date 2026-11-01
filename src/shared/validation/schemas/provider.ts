@@ -323,6 +323,8 @@ export const providerModelMutationSchema = z.object({
   isFree: z.boolean().nullable().optional(),
   normalizeToolCallId: z.boolean().optional(),
   preserveOpenAIDeveloperRole: z.boolean().nullable().optional(),
+  /** Gemini 3.8+: force thinkingConfig.includeThoughts for this model. `null` clears. */
+  includeThoughts: z.boolean().nullable().optional(),
   upstreamHeaders: upstreamHeadersRecordSchema.nullable().optional(),
   /** Zod 4: `z.record(z.enum([...]), …)` requires every enum key; use `partialRecord` for sparse patches. */
   compatByProtocol: z

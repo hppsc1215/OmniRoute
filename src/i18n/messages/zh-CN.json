@@ -5980,6 +5980,8 @@
     "compatAdjustmentsTitle": "兼容性",
     "compatButtonLabel": "兼容性",
     "compatToolIdShort": "工具 ID 9 位",
+    "compatIncludeThoughtsShort": "Include thoughts",
+    "compatIncludeThoughtsLabel": "Always request Gemini thoughts (includeThoughts) for this model, on every protocol. Thoughts stream early and keep long non-streaming calls alive behind relays; they count against max output tokens.",
     "compatDeveloperShort": "developer 角色",
     "compatDoNotPreserveDeveloper": "不保留 developer 角色",
     "compatBadgeNoPreserve": "不保留",
