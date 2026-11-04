@@ -41,7 +41,8 @@ This checkout is a **long-lived fork**, not a plain upstream clone. Remotes: `or
 - **Fork-only changes on `custom` (vs. upstream):** Kiro client `tool_call` collision fix; per-connection
   Antigravity toggle to omit `x-goog-user-project`; tp/s computed over full duration when reasoning is
   metered but not streamed; Copilot `/responses` stream item ids pinned per `output_index` (rotating ids
-  made the answer repeat 4x); build fixes (frontmatter titles in two provider docs, feature-flag DB layer out
+  made the answer repeat 4x); Kiro adaptive thinking defaults max_tokens to model output window and reports
+  reasoning-only empty streams as finish_reason: length; build fixes (frontmatter titles in two provider docs, feature-flag DB layer out
   of the Cursor catalog client bundle). Update this list when adding or dropping fork-only changes.
 
 ---
