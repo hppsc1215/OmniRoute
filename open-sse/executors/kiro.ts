@@ -76,6 +76,7 @@ type KiroStreamState = {
   hasMeteringEvent?: boolean;
   usage?: Partial<UsageSummary>;
   hasReasoningContent?: boolean;
+  hasVisibleContent?: boolean;
   reasoningChunkCount?: number;
   // Inline-thinking splitter state (populated only when thinkingExpected=true).
   thinking?: KiroThinkingState;
@@ -147,7 +148,14 @@ function buildKiroFinishChunk(
       {
         index: 0,
         delta: {},
-        finish_reason: state.hasToolCalls ? "tool_calls" : "stop",
+        // Kiro never sends a stop reason. A turn that produced reasoning but no
+        // answer and no tool call ran out of output budget while thinking; report
+        // it as truncated so clients don't take it for a finished, empty turn.
+        finish_reason: state.hasToolCalls
+          ? "tool_calls"
+          : state.hasReasoningContent && !state.hasVisibleContent
+            ? "length"
+            : "stop",
       },
     ],
   };
@@ -789,6 +797,7 @@ export class KiroExecutor extends BaseExecutor {
                   content,
                   (text) => {
                     if (!text) return;
+                    state.hasVisibleContent = true;
                     const chunk: JsonRecord = {
                       id: responseId,
                       object: "chat.completion.chunk",
@@ -834,6 +843,7 @@ export class KiroExecutor extends BaseExecutor {
                   }
                 );
               } else {
+                state.hasVisibleContent = true;
                 const chunk: JsonRecord = {
                   id: responseId,
                   object: "chat.completion.chunk",
@@ -854,6 +864,7 @@ export class KiroExecutor extends BaseExecutor {
 
             // Handle codeEvent
             if (eventType === "codeEvent" && event.payload?.content) {
+              state.hasVisibleContent = true;
               const chunk: JsonRecord = {
                 id: responseId,
                 object: "chat.completion.chunk",
@@ -1118,6 +1129,7 @@ export class KiroExecutor extends BaseExecutor {
               thinkingState,
               (text) => {
                 if (!text) return;
+                state.hasVisibleContent = true;
                 const chunk: JsonRecord = {
                   id: responseId,
                   object: "chat.completion.chunk",

@@ -747,16 +747,15 @@ function convertMessages(messages, tools, model) {
   const answeredToolUseIds = new Set<string>();
   for (const item of mergedHistory) {
     const toolResults = item.userInputMessage?.userInputMessageContext?.toolResults as
-      | Array<{ toolUseId?: string }>
-      | undefined;
+      Array<{ toolUseId?: string }> | undefined;
     if (Array.isArray(toolResults)) {
       for (const result of toolResults) {
         if (result?.toolUseId) answeredToolUseIds.add(result.toolUseId);
       }
     }
   }
-  const currentToolResultsForOrphanCheck = currentMessage?.userInputMessage
-    ?.userInputMessageContext?.toolResults as Array<{ toolUseId?: string }> | undefined;
+  const currentToolResultsForOrphanCheck = currentMessage?.userInputMessage?.userInputMessageContext
+    ?.toolResults as Array<{ toolUseId?: string }> | undefined;
   if (Array.isArray(currentToolResultsForOrphanCheck)) {
     for (const result of currentToolResultsForOrphanCheck) {
       if (result?.toolUseId) answeredToolUseIds.add(result.toolUseId);
@@ -764,8 +763,7 @@ function convertMessages(messages, tools, model) {
   }
   for (const item of mergedHistory) {
     const toolUses = item.assistantResponseMessage?.toolUses as
-      | Array<{ toolUseId?: string }>
-      | undefined;
+      Array<{ toolUseId?: string }> | undefined;
     if (!Array.isArray(toolUses)) continue;
     const filtered = toolUses.filter(
       (use) => use?.toolUseId && answeredToolUseIds.has(use.toolUseId)
@@ -896,7 +894,16 @@ export function buildKiroPayload(model, body, stream, credentials) {
     resolveKiroModelAlias(model);
   const messages = body.messages || [];
   let tools = body.tools || [];
-  const maxTokens = body.max_tokens ?? body.max_completion_tokens ?? 32000;
+  // Adaptive-thinking models share one output budget between reasoning and the
+  // answer. A 32k default let long reasoning on large contexts eat the whole
+  // budget, and Kiro then closed the stream with no answer at all. Without a
+  // client value, give these models their full output window instead.
+  const clientMaxTokens = body.max_tokens ?? body.max_completion_tokens;
+  const maxTokens =
+    clientMaxTokens ??
+    (supportsKiroAdaptiveThinking(normalizedModel)
+      ? (capMaxOutputTokens(normalizedModel) ?? 32000)
+      : 32000);
   const temperature = body.temperature;
   const topP = body.top_p;
 
@@ -1095,9 +1102,13 @@ export function buildKiroPayload(model, body, stream, credentials) {
       // `<thinking_mode>` / `<max_thinking_length>` are Kiro/CodeWhisperer prompt
       // conventions (NOT Anthropic API params); the length is a soft hint (the hard
       // enable signal is `<thinking_mode>`), clamped to the model's thinking cap.
-      const thinkingLength = capThinkingBudget(
-        normalizedModel,
-        thinkingLengthForEffort(kiroEffort)
+      // Keep at least half of max_tokens for the answer itself.
+      const thinkingLength = Math.max(
+        Math.min(
+          capThinkingBudget(normalizedModel, thinkingLengthForEffort(kiroEffort)),
+          maxTokens > 0 ? Math.floor(maxTokens / 2) : Number.POSITIVE_INFINITY
+        ),
+        512
       );
       const directive =
         `<thinking_mode>enabled</thinking_mode>` +
@@ -1105,8 +1116,8 @@ export function buildKiroPayload(model, body, stream, credentials) {
       payload.conversationState.currentMessage.userInputMessage.content = `${directive}\n\n${payload.conversationState.currentMessage.userInputMessage.content}`;
     }
 
-    // Forward max_tokens only when the client set one, clamped to the model's
-    // output window (floor 1024) — matches pi-kiro and avoids an over-budget reject.
+    // Forward max_tokens clamped to the model's output window (floor 1024),
+    // which avoids an over-budget reject.
     if (usesAdaptiveThinking && maxTokens > 0) {
       const capped = capMaxOutputTokens(normalizedModel, maxTokens) ?? maxTokens;
       fields.max_tokens = Math.max(Math.floor(capped), 1024);
