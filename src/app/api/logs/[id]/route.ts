@@ -164,7 +164,15 @@ export async function GET(
     ) {
       try {
         const completed = getCompletedDetails();
-        const inMem = completed.get(id);
+        let inMem = completed.get(id);
+        if (!inMem && persistedRequest?.correlationId) {
+          for (const item of completed.values()) {
+            if (item.correlationId === persistedRequest.correlationId) {
+              inMem = item;
+              break;
+            }
+          }
+        }
         if (inMem) {
           const safeStreamChunks = projectManagementStreamChunks(inMem.streamChunks);
           const pipelinePayloads: any = {
