@@ -11,6 +11,8 @@ const resetCreditModal =
   await import("../../src/app/(dashboard)/dashboard/usage/components/ProviderLimits/CodexResetCreditsModal.tsx");
 const resetCreditRedemption =
   await import("../../src/app/(dashboard)/dashboard/usage/components/ProviderLimits/useCodexResetCreditRedemption.ts");
+const quotaEligibility =
+  await import("../../src/app/(dashboard)/dashboard/usage/components/ProviderLimits/quotaEligibility.ts");
 
 type ParsedQuota = {
   name?: string;
@@ -228,6 +230,42 @@ test("Firecrawl over-plan quota displays remaining credits against the plan base
   assert.equal(parsed[0].extraCreditsInferred, 450);
   assert.equal(parsed[0].overPlan, true);
   assert.equal(providerLimitUtils.shouldShowQuotaUsageCount(parsed[0]), true);
+});
+
+test("Kiro overage quota rows report consumed credit instead of a permanent 100% left", () => {
+  const parsed = providerLimitUtils.parseQuotaData("kiro", {
+    quotas: {
+      credit: {
+        used: 1351.45,
+        total: 10000,
+        remaining: 8648.55,
+        remainingPercentage: 86.4855,
+        unlimited: true,
+      },
+    },
+  });
+
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].name, "credit");
+  assert.equal(providerLimitUtils.getQuotaRemainingPercentage(parsed[0]), 86.4855);
+  // The credit row is a counted quota (1,351.45 / 10,000), not a bare percentage.
+  assert.equal(providerLimitUtils.shouldShowQuotaUsageCount(parsed[0]), true);
+});
+
+test("health overview water level trusts a reported fraction over the unlimited routing flag", () => {
+  assert.equal(
+    quotaEligibility.quotaPercentage({
+      name: "credit",
+      used: 1351.45,
+      total: 10000,
+      remainingPercentage: 86.4855,
+      unlimited: true,
+    }),
+    86.4855
+  );
+  // No reported fraction: an unlimited window still reads as fully available.
+  assert.equal(quotaEligibility.quotaPercentage({ name: "credit", unlimited: true }), 100);
+  assert.equal(quotaEligibility.quotaPercentage({ name: "credit", used: 25, total: 100 }), 75);
 });
 
 test("Codex banked reset credits parse as an integer reset-credit counter", () => {

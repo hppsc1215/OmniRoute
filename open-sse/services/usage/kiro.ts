@@ -42,23 +42,34 @@ function isKiroOverageEnabled(data: JsonRecord): boolean {
   );
 }
 
+function kiroRemainingPercentage(used: number, total: number): number {
+  if (!Number.isFinite(total) || total <= 0) return 0;
+  const remaining = Math.max(0, total - Math.max(0, used));
+  return Math.max(0, Math.min(100, (remaining / total) * 100));
+}
+
 function buildKiroQuota(
   used: number,
   total: number,
   resetAt: string | null,
   overageEnabled: boolean
 ): UsageQuota {
-  const remaining = total - used;
+  const remaining = Math.max(0, total - used);
 
   if (!overageEnabled) {
     return { used, total, remaining, resetAt, unlimited: false };
   }
 
+  // Overage enabled means the plan is not a hard cap (#4469), but the included
+  // credit is still consumed: report the real remaining fraction so the quota card
+  // shows e.g. 86% left at 1,351 / 10,000 instead of a permanent 100%.
+  // quotaCache ignores `unlimited` windows for exhaustion, so a low percentage
+  // here cannot park the account.
   return {
     used,
     total,
     remaining,
-    remainingPercentage: 100,
+    remainingPercentage: kiroRemainingPercentage(used, total),
     resetAt,
     unlimited: true,
   };
