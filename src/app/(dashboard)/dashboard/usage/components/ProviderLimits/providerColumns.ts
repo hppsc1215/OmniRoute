@@ -26,6 +26,10 @@ const PROVIDER_COLUMNS: Record<string, string[]> = {
   glmt: ["session", "weekly", "mcp_monthly", "banked_reset_credits"],
   zai: ["session", "weekly", "mcp_monthly", "banked_reset_credits"],
   github: ["chat", "completions", "premium_interactions"],
+  // GitHub Enterprise Copilot reports the same three buckets; only
+  // `premium_interactions` (AI credits) is metered, chat/completions come back
+  // unlimited (ent=-1) and render as em-dashes.
+  "ghe-copilot": ["chat", "completions", "premium_interactions"],
   minimax: ["session"],
   "minimax-cn": ["session"],
   "kimi-coding": ["session", "weekly"],

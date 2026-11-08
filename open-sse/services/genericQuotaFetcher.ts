@@ -192,6 +192,11 @@ function percentUsedForQuota(entry: unknown): number | null {
   // unknown rather than defaulting remainingPercentage:0 into "100% used" —
   // otherwise one unreported model falsely exhausts the whole connection.
   if (q.fractionReported === false) return null;
+  // A Copilot AI-credit window with paid overage permitted keeps serving past
+  // 0% by billing the difference, so a 100% "used" reading is not a cutoff.
+  // Skipping the window lets the live preflight proceed instead of parking the
+  // connection until the monthly reset.
+  if (q.overagePermitted === true) return null;
 
   const remainingPercentage = toNumberOrNull(q.remainingPercentage);
   if (remainingPercentage !== null) {

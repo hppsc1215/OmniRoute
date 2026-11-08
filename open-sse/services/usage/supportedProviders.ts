@@ -24,6 +24,10 @@ export const USAGE_SUPPORTED_PROVIDERS: readonly string[] = [
   "kiro",
   "amazon-q",
   "github",
+  // GitHub Enterprise Copilot: AI-credit windows come from the connection's own
+  // response headers (x-quota-snapshot-*), since the GHE tenant has no public
+  // copilot_internal/user endpoint. See usage/gheCopilot.ts.
+  "ghe-copilot",
   "codex",
   "claude",
   "anthropic",

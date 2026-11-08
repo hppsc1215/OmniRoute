@@ -272,6 +272,12 @@ function QuotaDetailRow({
   const usedNum = Number(q.used || 0);
   const totalNum = Number(q.total || 0);
   const showUsage = shouldShowQuotaUsageCount(q);
+  // `ovPerm` alone only says overage is *allowed*; the badge marks a row that is
+  // actually drawing on it (credits consumed past the entitlement, or overage
+  // already billed).
+  const overageActive =
+    Number(q.overage?.used || 0) > 0 ||
+    (q.overage?.permitted === true && totalNum > 0 && usedNum >= totalNum);
 
   return (
     <div className="flex flex-col gap-1 py-1" title={q.modelKey || q.name}>
@@ -301,12 +307,24 @@ function QuotaDetailRow({
       </div>
       {!q.unlimited && <QuotaMiniBar percent={pct} size="sm" />}
       <div className="flex items-center justify-between gap-2 text-[10px] text-text-muted tabular-nums">
-        <span>
+        <span className="flex items-center gap-1">
           {showUsage && (
             <>
               {usedNum.toLocaleString()} / {totalNum.toLocaleString()}
             </>
           )}
+          {overageActive ? (
+            <span
+              className="rounded-sm border border-warning/30 bg-warning-bg px-1 text-[9px] uppercase tracking-wide text-warning"
+              title={translateUsageOrFallback(
+                t,
+                "overageAllowedHint",
+                "Included AI credits are used up; requests continue on paid overage."
+              )}
+            >
+              {translateUsageOrFallback(t, "overageAllowed", "overage")}
+            </span>
+          ) : null}
         </span>
         {q.staleAfterReset ? (
           <span title={t("refreshing")}>⟳</span>

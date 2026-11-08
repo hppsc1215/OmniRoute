@@ -139,6 +139,14 @@ function normalizeQuotaEntry(name: string, quota: any = {}, extras: any = {}) {
       ? { extraCreditsInferred: Number(quota.extraCreditsInferred) || 0 }
       : {}),
     ...(quota?.overPlan !== undefined ? { overPlan: quota.overPlan === true } : {}),
+    ...(quota?.overage && typeof quota.overage === "object"
+      ? {
+          overage: {
+            used: Number(quota.overage.used) || 0,
+            permitted: quota.overage.permitted === true,
+          },
+        }
+      : {}),
     ...(quota?.displayName !== undefined ? { displayName: String(quota.displayName) } : {}),
     ...(quota?.isPercentageOnly !== undefined
       ? { isPercentageOnly: quota.isPercentageOnly === true }
@@ -531,7 +539,7 @@ function looksLikeMoonshotBalance(data: any): boolean {
 
 function parseProviderQuotas(providerId: string, data: any) {
   if (looksLikeMoonshotBalance(data)) return parseMoonshotBalance(data);
-  if (providerId === "github") return parseGithub(data);
+  if (providerId === "github" || providerId === "ghe-copilot") return parseGithub(data);
   if (GLM_FAMILY_PROVIDERS.includes(providerId)) return parseGlmFamily(data);
   if (providerId === "antigravity" || providerId === "agy") return parseAntigravity(data);
   if (providerId === "codex") return parseCodex(data);

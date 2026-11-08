@@ -36,6 +36,7 @@ import { parseRetryAfterMs } from "../../services/apiKeyRotator.ts";
 import { createRecoverableStream, makeContinuationBody } from "../../services/streamRecovery.ts";
 import { persistCodexChildQuotaResponse } from "../../services/codexAccount/index.ts";
 import { invalidateQuotaCacheOnStatus } from "../../services/genericQuotaFetcher.ts";
+import { recordGitHubQuotaFromResponseHeaders } from "@/lib/usage/githubQuotaCapture.ts";
 import {
   isRateLimitEnabled,
   withRateLimit,
@@ -406,6 +407,28 @@ export async function executeProviderRequest(
               } catch (err) {
                 const errMessage = err instanceof Error ? err.message : String(err);
                 log?.debug?.("CODEX", `Failed to persist codex quota state: ${errMessage}`);
+              }
+            }
+            // Passive GitHub Copilot quota capture: every response from
+            // `ghe-copilot` (and the `github` proxy path) carries the account's AI-credit
+            // snapshot as x-quota-snapshot-* headers. This is the only quota source a
+            // GHE tenant offers — api.github.com/copilot_internal/user is not its API —
+            // so it is recorded here, on the one place both the streaming and the
+            // non-streaming leg pass through, instead of polling an endpoint.
+            if (
+              attemptConnectionId &&
+              res.response.ok &&
+              (provider === "github" || provider === "ghe-copilot")
+            ) {
+              try {
+                recordGitHubQuotaFromResponseHeaders({
+                  provider,
+                  connectionId: String(attemptConnectionId),
+                  headers: normalizeHeaders(res.response.headers),
+                });
+              } catch (err) {
+                const errMessage = err instanceof Error ? err.message : String(err);
+                log?.debug?.("GITHUB_QUOTA", `Passive quota capture skipped: ${errMessage}`);
               }
             }
             if (attemptConnectionId && res.response.status === 429) {

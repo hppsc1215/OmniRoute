@@ -22,6 +22,9 @@
  */
 export const USAGE_FETCHER_PROVIDERS = [
   "github",
+  // GHE Copilot: passive capture of x-quota-snapshot-* response headers
+  // (usage/gheCopilot.ts) + best-effort tenant copilot_internal/user probe.
+  "ghe-copilot",
   "antigravity",
   "agy",
   "claude",
