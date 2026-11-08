@@ -15,7 +15,7 @@
  */
 
 import { recordLedgerEntrySafe } from "@/lib/db/costLedger";
-import { getPricingForModel } from "@/lib/db/settings/pricing";
+import { resolveEffectiveRates, resolvePricingRow } from "./costCalculator";
 import { getLoggedInputTokens, getLoggedOutputTokens, getReasoningTokens } from "./tokenAccounting";
 import { toNumber } from "@/shared/utils/numeric";
 
@@ -33,8 +33,9 @@ export interface CostLedgerRecorderInput {
 
 /**
  * Record a completed call into the cost ledger, resolving unit prices from the
- * same pricing source `calculateCost` uses (best-effort, no pricing row → 0).
- * Fire-and-forget: safe to call without awaiting; never throws.
+ * same pricing source `calculateCost` uses — including the long-context tier that
+ * actually applied, so the stored unit prices match the stored amount (best-effort,
+ * no pricing row → 0). Fire-and-forget: safe to call without awaiting; never throws.
  */
 export async function recordLedgerFromCost(input: CostLedgerRecorderInput): Promise<void> {
   if (!input?.apiKeyId) return;
@@ -42,10 +43,11 @@ export async function recordLedgerFromCost(input: CostLedgerRecorderInput): Prom
     let unitPriceInput = 0;
     let unitPriceOutput = 0;
     if (input.provider && input.model) {
-      const pricing = await getPricingForModel(input.provider, input.model);
-      if (pricing) {
-        unitPriceInput = toNumber(pricing.input);
-        unitPriceOutput = toNumber(pricing.output);
+      const pricing = await resolvePricingRow(input.provider, input.model);
+      const rates = resolveEffectiveRates(pricing, input.tokens);
+      if (rates) {
+        unitPriceInput = toNumber(rates.input);
+        unitPriceOutput = toNumber(rates.output);
       }
     }
 

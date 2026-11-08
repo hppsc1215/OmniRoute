@@ -144,14 +144,39 @@ export function getPricingLookupModels(provider: string, model: string): string[
   return keys;
 }
 
-/** Pricing row for (provider, model), trying {@link getPricingLookupModels} in order. */
-async function resolvePricingRow(provider: string, model: string) {
+/**
+ * Pricing row for (provider, model), trying {@link getPricingLookupModels} in order.
+ * Exported so the request cost ledger snapshots the same effective rates the cost
+ * calculation used (including the long-context tier).
+ */
+export async function resolvePricingRow(provider: string, model: string) {
   const { getPricingForModel } = await import("@/lib/db/settings");
   for (const key of getPricingLookupModels(provider, model)) {
     const pricing = await getPricingForModel(provider, key);
     if (pricing) return pricing;
   }
   return null;
+}
+
+/**
+ * Rates actually applied to one request: the resolved row with its long-context tier
+ * folded in, keyed off the cache-inclusive prompt size. Both cost accounting and the
+ * cost ledger must price a request through this, or the ledger reports tier-1 rates
+ * for a request billed at the long-context tier.
+ */
+export function resolveEffectiveRates(
+  pricing: Record<string, unknown> | null | undefined,
+  tokens: unknown
+): Record<string, unknown> | null {
+  if (!pricing) return null;
+  return applyLongContextTier(pricing, promptTokensForTier(tokens));
+}
+
+/** Prompt total a request is tiered on — same field precedence as the cost math. */
+function promptTokensForTier(tokens: unknown): number {
+  if (!tokens || typeof tokens !== "object") return 0;
+  const record = tokens as Record<string, unknown>;
+  return toNumber(record.input ?? record.prompt_tokens ?? record.input_tokens, 0);
 }
 
 export function getCodexFastCostMultiplier(
@@ -196,11 +221,18 @@ export function getCodexFastCostMultiplier(
 /**
  * Long-context pricing tier: a row may carry `long_context: { threshold, inclusive?, ...rates }`
  * (e.g. OpenAI bills prompts above 272K input tokens at 2x input / 1.5x output for the whole
- * request; xAI switches at >= 200K). The threshold compares the total, cache-inclusive prompt
- * size. When it is crossed, the tier's rates replace the flat ones for the whole request; any
- * rate the tier omits keeps its flat value. Malformed tiers are ignored.
+ * request; xAI switches at >= 200K; Claude Haiku 5.5 above 100K). The threshold compares the
+ * total, cache-inclusive prompt size — `input`/`prompt_tokens` already fold in cache reads and
+ * writes, and the translators normalize raw Anthropic usage into that shape before costing (#13746).
+ * When the threshold is crossed, the tier's rates replace the flat ones for the whole request;
+ * any rate the tier omits keeps its flat value. A tier that raises `output` without naming
+ * `reasoning` drops the inherited reasoning premium instead of letting it subtract from the
+ * higher output rate. Malformed tiers are ignored.
+ *
+ * Exported so the request cost ledger snapshots the SAME effective rates the amount was
+ * computed from, rather than the flat tier-1 row.
  */
-function applyLongContextTier(
+export function applyLongContextTier(
   pricing: Record<string, unknown>,
   inputTokens: number
 ): Record<string, unknown> {
@@ -210,7 +242,10 @@ function applyLongContextTier(
   const limit = toNumber(threshold, Number.NaN);
   if (!Number.isFinite(limit) || limit <= 0) return pricing;
   const crossed = inclusive === true ? inputTokens >= limit : inputTokens > limit;
-  return crossed ? { ...pricing, ...tierRates } : pricing;
+  if (!crossed) return pricing;
+  const rates = { ...pricing, ...tierRates };
+  if (tierRates.output !== undefined && tierRates.reasoning === undefined) delete rates.reasoning;
+  return rates;
 }
 
 /**
@@ -244,7 +279,11 @@ export function computeCostFromPricing(
   // cost handled above. Its per-token rows describe no real tariff, so they are
   // never a cost basis: pricing them would bill the request a second time.
   if (isCreditMeteredProvider(options.provider)) return 0;
-  const inputTokens = tokens.input ?? tokens.prompt_tokens ?? tokens.input_tokens ?? 0;
+  // Prompt size for the long-context tier. `input`/`prompt_tokens` are the
+  // cache-inclusive totals (extractors fold cache reads in; Anthropic's raw
+  // `input_tokens` + cache counters are normalized by the translators before costing —
+  // see the #13746 regression suite), so cache reads must not be added again here.
+  const inputTokens = promptTokensForTier(tokens);
   const rates = applyLongContextTier(pricing, inputTokens);
   const inputPrice = toNumber(rates.input, 0);
   const cachedPrice = toNumber(rates.cached, inputPrice);
