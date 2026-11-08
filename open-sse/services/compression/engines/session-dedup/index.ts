@@ -32,6 +32,7 @@
 
 import crypto from "node:crypto";
 import { createCompressionStats } from "../../stats.ts";
+import { providerSupportsCaching } from "../../../../utils/cacheControlPolicy.ts";
 import { runFuzzyPass } from "./fuzzy.ts";
 import { callerSupportsCcrRetrieve } from "../ccr/protocolInstruction.ts";
 import type {
@@ -200,7 +201,10 @@ function dedupeWithinMessage(
 function dedupMessageTexts(
   msgTexts: Array<{ msgIdx: number; messageIndex: number; text: string }>,
   minBlockChars: number,
-  currentTurnStart: number
+  /** Messages at or after this index are never rewritten (the live turn). */
+  protectFromIndex: number,
+  /** Messages before this index are never rewritten (already-sent history, frozen). */
+  eligibleFromIndex = 0
 ): {
   deduped: Map<number, string>;
   dedupCount: number;
@@ -211,7 +215,7 @@ function dedupMessageTexts(
   // Single-message case: apply intra-message dedup.
   if (msgTexts.length === 1) {
     const { text, msgIdx, messageIndex } = msgTexts[0];
-    if (messageIndex >= currentTurnStart) {
+    if (messageIndex >= protectFromIndex || messageIndex < eligibleFromIndex) {
       return { deduped, dedupCount };
     }
     const { deduped: dedupedText, changed } = dedupeWithinMessage(text, minBlockChars);
@@ -242,7 +246,7 @@ function dedupMessageTexts(
   // The current turn is never rewritten: a re-read tool result replaced by a marker
   // reads to the model as a lost read, and it reads the file again another way.
   for (const { msgIdx, messageIndex, text } of msgTexts) {
-    if (messageIndex >= currentTurnStart) continue;
+    if (messageIndex >= protectFromIndex || messageIndex < eligibleFromIndex) continue;
     const lines = text.split("\n");
     const blocks = findSuffixBlocks(lines, minBlockChars);
 
@@ -403,7 +407,8 @@ function calculateCurrentTurnStart(messages: MessageLike[]): number {
 function processMessages(
   messages: MessageLike[],
   minBlockChars: number,
-  currentTurnStart: number
+  currentTurnStart: number,
+  eligibleFromIndex = 0
 ): { messages: MessageLike[]; dedupCount: number } {
   // Collect (msgIdx, text) for non-system messages, including Anthropic tool_result text.
   // For multipart, index each text-bearing slot separately.
@@ -423,7 +428,12 @@ function processMessages(
     return { messages, dedupCount: 0 };
   }
 
-  const { deduped, dedupCount } = dedupMessageTexts(msgTexts, minBlockChars, currentTurnStart);
+  const { deduped, dedupCount } = dedupMessageTexts(
+    msgTexts,
+    minBlockChars,
+    currentTurnStart,
+    eligibleFromIndex
+  );
 
   if (dedupCount === 0) {
     return { messages, dedupCount: 0 };
@@ -534,11 +544,29 @@ export const sessionDedupEngine: CompressionEngine = {
 
     const currentTurnStart = calculateCurrentTurnStart(messages as MessageLike[]);
 
+    // Cache-sensitive targets must not rewrite messages that were already sent
+    // upstream. `currentTurnStart` moves forward every turn, so a message that was
+    // protected as "current turn" in request N becomes eligible in request N+1 —
+    // its bytes then change retroactively, which invalidates the cached prefix from
+    // that message onwards (observed as old tool results being replaced by
+    // `[dedup:ref …]` two turns after they were first sent). Freezing everything
+    // before the current turn makes the emitted history monotone: only the newest
+    // turn is ever rewritten, so the prefix stays byte-identical turn over turn.
+    const freezeSentHistory =
+      stepConfig["freezeSentHistory"] === true ||
+      providerSupportsCaching(options?.provider, options?.targetFormat, undefined, options?.model);
+    // Frozen: only the live turn may be rewritten (eligible from currentTurnStart,
+    // nothing protected above it). Default: history is rewritten, the live turn is
+    // protected — the legacy "never rewrite what the model just read" contract.
+    const protectFromIndex = freezeSentHistory ? Number.MAX_SAFE_INTEGER : currentTurnStart;
+    const eligibleFromIndex = freezeSentHistory ? currentTurnStart : 0;
+
     const start = performance.now();
     const { messages: exactMessages, dedupCount } = processMessages(
       messages as MessageLike[],
       minBlockChars,
-      currentTurnStart
+      protectFromIndex,
+      eligibleFromIndex
     );
 
     const { messages: finalMessages, fuzzyCount } = runFuzzyPass(
@@ -547,7 +575,7 @@ export const sessionDedupEngine: CompressionEngine = {
       minBlockChars,
       options?.principalId,
       callerSupportsCcrRetrieve(body),
-      currentTurnStart
+      protectFromIndex
     );
 
     if (dedupCount + fuzzyCount === 0) {

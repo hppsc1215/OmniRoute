@@ -5,6 +5,8 @@ import { getModelTargetFormat } from "../../config/providerModels.ts";
 import { NON_ANTHROPIC_THINKING_PLACEHOLDER } from "../../utils/reasoningPlaceholder.ts";
 import { sanitizeToolId } from "./schemaCoercion.ts";
 import { isRestoredClaudeThinkingBlock } from "../../services/claudeThinkingStore.ts";
+import { applyClaudeCacheBreakpoints } from "./claudeCacheBreakpoints.ts";
+import { providerAcceptsClaudeCacheBreakpoints } from "../../utils/cacheControlPolicy.ts";
 
 export { NON_ANTHROPIC_THINKING_PLACEHOLDER } from "../../utils/reasoningPlaceholder.ts";
 
@@ -385,14 +387,20 @@ function markMessageCacheControl(msg: ClaudeMessage, ttl?: string): boolean {
  * Build the cache marker OmniRoute adds when the client did not provide one.
  * Vertex defaults to five minutes when ttl is omitted; unlike 1h, that mode is
  * supported by every cache-capable Claude model on Vertex and has cheaper writes.
+ *
+ * The 1h TTL is an Anthropic BETA field (`extended-cache-ttl-2025-04-11`): only
+ * the Anthropic-native executors negotiate that header (claudeIdentity
+ * selectBetaFlags). Providers routed through a third-party Messages shim — e.g.
+ * GitHub/GHE Copilot's `/v1/messages`, which receives `anthropic-version` only —
+ * must get the plain 5-minute marker or the request is rejected/ignored.
  */
 export function createDefaultClaudeCacheControl(provider?: string | null): {
   type: string;
   ttl?: string;
 } {
-  return provider === "vertex" || provider === "vertex-partner"
-    ? { type: "ephemeral" }
-    : { type: "ephemeral", ttl: "1h" };
+  const extendedTtlCapable =
+    !provider || provider === "claude" || provider.startsWith("anthropic-compatible-");
+  return extendedTtlCapable ? { type: "ephemeral", ttl: "1h" } : { type: "ephemeral" };
 }
 
 /** True when the body carries at least one cache_control marker anywhere
@@ -458,10 +466,28 @@ export function prepareClaudeRequest(
   // 1. System: remove all cache_control, add only to the last block with the provider TTL
   // In passthrough mode, preserve existing cache_control markers
   const isVertexClaudeProvider = provider === "vertex" || provider === "vertex-partner";
+  // Caching-capable Claude upstreams get breakpoints. `supportsPromptCaching` used to be
+  // a hardcoded Anthropic-native allowlist (claude/vertex/anthropic-compatible-*), which
+  // silently excluded Claude-format providers routed to an Anthropic Messages shim
+  // (ghe-copilot, github). For those the strip passes below still ran, so every marker the
+  // OpenAI->Claude translator had placed was deleted and NONE was re-added: the upstream
+  // got zero breakpoints and every turn re-billed the full prompt (cache_write=0).
   const supportsPromptCaching =
     provider === "claude" ||
     isVertexClaudeProvider ||
-    provider?.startsWith?.("anthropic-compatible-");
+    provider?.startsWith?.("anthropic-compatible-") ||
+    providerAcceptsClaudeCacheBreakpoints(provider);
+  // The Claude-Code-style layout below (system + second-to-last user + last
+  // assistant) stops one turn short: the newest message — usually the tool result
+  // the agent just has to read — is never covered, so every turn re-writes the
+  // largest block uncached. Providers covered only by the new predicate get the
+  // rolling placement from applyClaudeCacheBreakpoints() instead, whose deepest
+  // anchor is the last message.
+  const usesLegacyCacheLayout =
+    provider === "claude" ||
+    isVertexClaudeProvider ||
+    !!provider?.startsWith?.("anthropic-compatible-");
+  const useRollingBreakpoints = supportsPromptCaching && !usesLegacyCacheLayout;
   // Vertex's documented default is a five-minute ephemeral cache. Omitting ttl is
   // both cheaper and compatible with Claude models that reject the optional 1h TTL.
   const isKimiCoding = provider === "kimi-coding" || provider === "kimi-coding-apikey";
@@ -563,15 +589,24 @@ export function prepareClaudeRequest(
             function?: { name?: string; description?: string; parameters?: unknown };
             type?: string;
           };
+          // Cache breakpoints are provider-level, not shape-level: keep them on
+          // caching-capable upstreams so a client-supplied tool marker is not
+          // silently dropped by the shape normalization (breaks the cache prefix,
+          // since the tool block is re-sent verbatim on every turn).
+          const keepCacheControl =
+            supportsPromptCaching && t.cache_control !== undefined
+              ? { cache_control: t.cache_control }
+              : {};
           if (t.function) {
             return {
               name: t.function.name,
               description: t.function.description,
               input_schema: t.function.parameters,
+              ...keepCacheControl,
             } as ClaudeTool;
           }
           const { type: _type, ...rest } = t;
-          return rest as ClaudeTool;
+          return { ...rest, ...keepCacheControl } as ClaudeTool;
         });
     }
 
@@ -599,7 +634,7 @@ export function prepareClaudeRequest(
     // - cache the second-to-last user turn for conversation reuse
     // - cache the last assistant turn so the next user turn can reuse it
     // Skip in passthrough mode to preserve client's cache_control markers
-    if (!preserveCacheControl && supportsPromptCaching) {
+    if (!preserveCacheControl && supportsPromptCaching && !useRollingBreakpoints) {
       const userMessageIndexes = filtered.reduce<number[]>((indexes, msg, index) => {
         if (msg?.role === "user") indexes.push(index);
         return indexes;
@@ -651,6 +686,7 @@ export function prepareClaudeRequest(
         if (
           !preserveCacheControl &&
           supportsPromptCaching &&
+          !useRollingBreakpoints &&
           !lastAssistantProcessed &&
           markMessageCacheControl(msg)
         ) {
@@ -867,6 +903,14 @@ export function prepareClaudeRequest(
   // exempt them (they were the 400 sources on claude 5.x since 2026-09-29).
   hoistToolResultCacheControl(body);
   if (supportsPromptCaching) {
+    // Fill the rolling anchor points (last message, previous user turn, and any of
+    // tools/system the legacy heuristic did not mark). Budget-capped, so a client
+    // that marks only two blocks still ends up with a rolling anchor instead of a
+    // cache that stops at its own marker. Only for providers on the rolling layout:
+    // the Anthropic-native allowlist keeps its long-tested Claude-Code layout.
+    if (useRollingBreakpoints) {
+      applyClaudeCacheBreakpoints(body, createDefaultClaudeCacheControl(provider));
+    }
     enforceCacheControlBlockLimit(body);
   }
 
