@@ -27,6 +27,13 @@ export interface QuotaInfo {
   // percentage; `false` means "unknown", so callers must not treat the
   // defaulted-to-0 `remainingPercentage` as genuine exhaustion.
   fractionReported?: boolean;
+  // GitHub Copilot `ovPerm=true`: the window reports a real fraction (so it is
+  // NOT `fractionReported:false`) and its credit counts must stay displayable,
+  // but the account keeps serving past zero by billing overage. Such a window
+  // must never park the connection: `isExhausted` ignores it, while the
+  // dashboard still renders used / entitlement / remaining from the Provider
+  // Limits entry.
+  overagePermitted?: boolean;
   displayName?: string;
   windowSeconds?: number | null;
   claudeQuota?: ClaudeQuotaMetadata;

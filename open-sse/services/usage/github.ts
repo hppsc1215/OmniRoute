@@ -66,87 +66,99 @@ export async function getGitHubUsage(
     }
 
     const data = await response.json();
-    const dataRecord = toRecord(data);
-
-    // Handle different response formats (paid vs free)
-    if (dataRecord.quota_snapshots) {
-      // Paid plan format
-      const snapshots = toRecord(dataRecord.quota_snapshots);
-      const resetAt = parseResetTime(
-        getFieldValue(dataRecord, "quota_reset_date", "quotaResetDate")
-      );
-      const premiumQuota = formatGitHubQuotaSnapshot(snapshots.premium_interactions, resetAt);
-      const chatQuota = formatGitHubQuotaSnapshot(snapshots.chat, resetAt);
-      const completionsQuota = formatGitHubQuotaSnapshot(snapshots.completions, resetAt);
-      const quotas: Record<string, UsageQuota> = {};
-
-      if (shouldDisplayGitHubQuota(premiumQuota)) {
-        quotas.premium_interactions = premiumQuota;
-      }
-      if (shouldDisplayGitHubQuota(chatQuota)) {
-        quotas.chat = chatQuota;
-      }
-      if (shouldDisplayGitHubQuota(completionsQuota)) {
-        quotas.completions = completionsQuota;
-      }
-
-      return {
-        plan: inferGitHubPlanName(dataRecord, premiumQuota),
-        resetDate: getFieldValue(dataRecord, "quota_reset_date", "quotaResetDate"),
-        quotas,
-      };
-    } else if (dataRecord.monthly_quotas || dataRecord.limited_user_quotas) {
-      // Free/limited plan format. NOTE (#2876): the upstream field
-      // `limited_user_quotas[name]` is the *remaining* count for the month
-      // (it counts down toward 0 and resets on `limited_user_reset_date`),
-      // NOT the used count. The pre-3.8.6 implementation inverted this and
-      // showed "0% when not used / 100% when fully used" on the dashboard.
-      // Confirmed against three independent upstream parsers:
-      //   - robinebers/openusage  (upstream docs/providers/copilot.md Free Tier table)
-      //   - raycast/extensions    agent-usage/src/copilot/fetcher.ts (inline comment)
-      //   - looplj/axonhub        frontend/src/components/quota-badges.tsx
-      const monthlyQuotas = toRecord(dataRecord.monthly_quotas);
-      const remainingQuotas = toRecord(dataRecord.limited_user_quotas);
-      const resetDate = getFieldValue(
-        dataRecord,
-        "limited_user_reset_date",
-        "limitedUserResetDate"
-      );
-      const resetAt = parseResetTime(resetDate);
-      const quotas: Record<string, UsageQuota> = {};
-
-      const addLimitedQuota = (name: string) => {
-        const total = toNumber(getFieldValue(monthlyQuotas, name, name), 0);
-        if (total <= 0) return null;
-        const remainingRaw = Math.max(0, toNumber(getFieldValue(remainingQuotas, name, name), 0));
-        const remaining = Math.min(remainingRaw, total);
-        const used = Math.max(total - remaining, 0);
-        quotas[name] = {
-          used,
-          total,
-          remaining,
-          remainingPercentage: clampPercentage((remaining / total) * 100),
-          unlimited: false,
-          resetAt,
-        };
-        return quotas[name];
-      };
-
-      const premiumQuota = addLimitedQuota("premium_interactions");
-      addLimitedQuota("chat");
-      addLimitedQuota("completions");
-
-      return {
-        plan: inferGitHubPlanName(dataRecord, premiumQuota),
-        resetDate,
-        quotas,
-      };
-    }
+    const usage = buildGitHubUsageFromInternalUserPayload(data);
+    if (usage) return usage;
 
     return { message: "GitHub Copilot connected. Unable to parse quota data." };
   } catch (error) {
     throw new Error(`Failed to fetch GitHub usage: ${error.message}`);
   }
+}
+
+/**
+ * Map a `copilot_internal/user` payload (paid or free/limited plan shape) to the
+ * shared usage envelope. Returns null when the payload carries neither shape.
+ *
+ * Extracted verbatim from getGitHubUsage so the GHE variant can reuse it against
+ * the tenant-scoped endpoint.
+ */
+export function buildGitHubUsageFromInternalUserPayload(data: unknown): {
+  plan: string;
+  resetDate: unknown;
+  quotas: Record<string, UsageQuota>;
+} | null {
+  const dataRecord = toRecord(data);
+
+  // Handle different response formats (paid vs free)
+  if (dataRecord.quota_snapshots) {
+    // Paid plan format
+    const snapshots = toRecord(dataRecord.quota_snapshots);
+    const resetAt = parseResetTime(getFieldValue(dataRecord, "quota_reset_date", "quotaResetDate"));
+    const premiumQuota = formatGitHubQuotaSnapshot(snapshots.premium_interactions, resetAt);
+    const chatQuota = formatGitHubQuotaSnapshot(snapshots.chat, resetAt);
+    const completionsQuota = formatGitHubQuotaSnapshot(snapshots.completions, resetAt);
+    const quotas: Record<string, UsageQuota> = {};
+
+    if (shouldDisplayGitHubQuota(premiumQuota)) {
+      quotas.premium_interactions = premiumQuota;
+    }
+    if (shouldDisplayGitHubQuota(chatQuota)) {
+      quotas.chat = chatQuota;
+    }
+    if (shouldDisplayGitHubQuota(completionsQuota)) {
+      quotas.completions = completionsQuota;
+    }
+
+    return {
+      plan: inferGitHubPlanName(dataRecord, premiumQuota),
+      resetDate: getFieldValue(dataRecord, "quota_reset_date", "quotaResetDate"),
+      quotas,
+    };
+  } else if (dataRecord.monthly_quotas || dataRecord.limited_user_quotas) {
+    // Free/limited plan format. NOTE (#2876): the upstream field
+    // `limited_user_quotas[name]` is the *remaining* count for the month
+    // (it counts down toward 0 and resets on `limited_user_reset_date`),
+    // NOT the used count. The pre-3.8.6 implementation inverted this and
+    // showed "0% when not used / 100% when fully used" on the dashboard.
+    // Confirmed against three independent upstream parsers:
+    //   - robinebers/openusage  (upstream docs/providers/copilot.md Free Tier table)
+    //   - raycast/extensions    agent-usage/src/copilot/fetcher.ts (inline comment)
+    //   - looplj/axonhub        frontend/src/components/quota-badges.tsx
+    const monthlyQuotas = toRecord(dataRecord.monthly_quotas);
+    const remainingQuotas = toRecord(dataRecord.limited_user_quotas);
+    const resetDate = getFieldValue(dataRecord, "limited_user_reset_date", "limitedUserResetDate");
+    const resetAt = parseResetTime(resetDate);
+    const quotas: Record<string, UsageQuota> = {};
+
+    const addLimitedQuota = (name: string) => {
+      const total = toNumber(getFieldValue(monthlyQuotas, name, name), 0);
+      if (total <= 0) return null;
+      const remainingRaw = Math.max(0, toNumber(getFieldValue(remainingQuotas, name, name), 0));
+      const remaining = Math.min(remainingRaw, total);
+      const used = Math.max(total - remaining, 0);
+      quotas[name] = {
+        used,
+        total,
+        remaining,
+        remainingPercentage: clampPercentage((remaining / total) * 100),
+        unlimited: false,
+        resetAt,
+      };
+      return quotas[name];
+    };
+
+    const premiumQuota = addLimitedQuota("premium_interactions");
+    addLimitedQuota("chat");
+    addLimitedQuota("completions");
+
+    return {
+      plan: inferGitHubPlanName(dataRecord, premiumQuota),
+      resetDate,
+      quotas,
+    };
+  }
+
+  return null;
 }
 
 export function formatGitHubQuotaSnapshot(

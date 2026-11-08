@@ -59,6 +59,7 @@ import { getCodeBuddyIntlUsage } from "./usage/codebuddy-intl.ts";
 import { getPromptQlUsage } from "./usage/promptql.ts";
 import { getHyperAgentUsage } from "./usage/hyperagent.ts";
 import { getGitHubUsage, formatGitHubQuotaSnapshot, inferGitHubPlanName } from "./usage/github.ts";
+import { getGheCopilotUsage } from "./usage/gheCopilot.ts";
 import { getCrofUsage } from "./usage/crof.ts";
 import { getClinepassUsage } from "./usage/clinepass.ts";
 import { getNanoGptUsage } from "./usage/nanogpt.ts";
@@ -156,6 +157,11 @@ export async function getUsageForProvider(
   switch (provider) {
     case "github":
       return await getGitHubUsage(accessToken, providerSpecificData, id || "");
+    case "ghe-copilot":
+      // GHE tenants have no public copilot_internal/user; the AI-credit quota is
+      // captured passively from x-quota-snapshot-* response headers, with a
+      // best-effort tenant probe as bootstrap. See usage/gheCopilot.ts.
+      return await getGheCopilotUsage(accessToken, providerSpecificData, id || "");
     case "antigravity":
     case "agy":
       return await getAntigravityUsage(
