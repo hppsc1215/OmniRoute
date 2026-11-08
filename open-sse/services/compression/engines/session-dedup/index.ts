@@ -24,6 +24,10 @@
  *   - First occurrence is ALWAYS kept intact; only later identical occurrences are replaced.
  *   - Never rewrite the current turn (messages after the last assistant message): the
  *     model must see what it just read or was just sent. It is deduped on a later turn.
+ *   - Prompt-cache targets (and the explicit `freezeSentHistory` opt-in): the engine is
+ *     a NO-OP. Anthropic-style prefix caching is byte-exact, and no per-message rewrite
+ *     rule here can be both position-stable and usable — see the comment in `apply()`.
+ *     Non-caching targets keep the legacy history-rewrite behaviour unchanged.
  *
  * Reconstruction:
  *   Replace every `[dedup:ref sha=XXXXXXXX]` marker with the original block text
@@ -202,9 +206,7 @@ function dedupMessageTexts(
   msgTexts: Array<{ msgIdx: number; messageIndex: number; text: string }>,
   minBlockChars: number,
   /** Messages at or after this index are never rewritten (the live turn). */
-  protectFromIndex: number,
-  /** Messages before this index are never rewritten (already-sent history, frozen). */
-  eligibleFromIndex = 0
+  protectFromIndex: number
 ): {
   deduped: Map<number, string>;
   dedupCount: number;
@@ -215,7 +217,7 @@ function dedupMessageTexts(
   // Single-message case: apply intra-message dedup.
   if (msgTexts.length === 1) {
     const { text, msgIdx, messageIndex } = msgTexts[0];
-    if (messageIndex >= protectFromIndex || messageIndex < eligibleFromIndex) {
+    if (messageIndex >= protectFromIndex) {
       return { deduped, dedupCount };
     }
     const { deduped: dedupedText, changed } = dedupeWithinMessage(text, minBlockChars);
@@ -246,7 +248,7 @@ function dedupMessageTexts(
   // The current turn is never rewritten: a re-read tool result replaced by a marker
   // reads to the model as a lost read, and it reads the file again another way.
   for (const { msgIdx, messageIndex, text } of msgTexts) {
-    if (messageIndex >= protectFromIndex || messageIndex < eligibleFromIndex) continue;
+    if (messageIndex >= protectFromIndex) continue;
     const lines = text.split("\n");
     const blocks = findSuffixBlocks(lines, minBlockChars);
 
@@ -407,8 +409,7 @@ function calculateCurrentTurnStart(messages: MessageLike[]): number {
 function processMessages(
   messages: MessageLike[],
   minBlockChars: number,
-  currentTurnStart: number,
-  eligibleFromIndex = 0
+  currentTurnStart: number
 ): { messages: MessageLike[]; dedupCount: number } {
   // Collect (msgIdx, text) for non-system messages, including Anthropic tool_result text.
   // For multipart, index each text-bearing slot separately.
@@ -428,12 +429,7 @@ function processMessages(
     return { messages, dedupCount: 0 };
   }
 
-  const { deduped, dedupCount } = dedupMessageTexts(
-    msgTexts,
-    minBlockChars,
-    currentTurnStart,
-    eligibleFromIndex
-  );
+  const { deduped, dedupCount } = dedupMessageTexts(msgTexts, minBlockChars, currentTurnStart);
 
   if (dedupCount === 0) {
     return { messages, dedupCount: 0 };
@@ -542,31 +538,48 @@ export const sessionDedupEngine: CompressionEngine = {
       return { body, compressed: false, stats: null };
     }
 
-    const currentTurnStart = calculateCurrentTurnStart(messages as MessageLike[]);
-
-    // Cache-sensitive targets must not rewrite messages that were already sent
-    // upstream. `currentTurnStart` moves forward every turn, so a message that was
-    // protected as "current turn" in request N becomes eligible in request N+1 —
-    // its bytes then change retroactively, which invalidates the cached prefix from
-    // that message onwards (observed as old tool results being replaced by
-    // `[dedup:ref …]` two turns after they were first sent). Freezing everything
-    // before the current turn makes the emitted history monotone: only the newest
-    // turn is ever rewritten, so the prefix stays byte-identical turn over turn.
-    const freezeSentHistory =
+    // Prompt-cache targets: emit the body unchanged.
+    //
+    // A cache hit needs every message of request N to be byte-identical to the same
+    // message of request N+1 (Anthropic hashes the exact serialized prefix). A rewrite
+    // is cache-safe only when the emitted form of message i is a pure function of
+    // messages 0..i — and this engine has no such rule that is also usable:
+    //
+    //   - rewriting only already-sent history (the legacy rule) flips a message from
+    //     the original text (turn N, when it was still the live turn and thus protected)
+    //     to `[dedup:ref …]` (turn N+1): bytes change retroactively.
+    //   - rewriting only the live turn (the previous `freezeSentHistory` rule) flips it
+    //     the other way round: `[dedup:ref …]` in turn N, original text in turn N+1.
+    //     It is also self-defeating: a message is protected while it is live and frozen
+    //     afterwards, so no message is ever eligible — except the live turn, which is
+    //     the one rewrite that is guaranteed to change bytes next turn.
+    //   - rewriting every duplicate regardless of position IS position-stable, but it
+    //     hides the tool result the model just asked for behind a marker that nothing
+    //     resolves (`__sessionDedupMap__` is documented but never attached): the model
+    //     re-reads the file, and that re-read is deduped again — forever.
+    //
+    // The economics agree: a cache read bills at a fraction of the input price, while a
+    // broken prefix re-bills every token from the rewritten message onwards at the
+    // cache-write price — so the tokens one marker saves can only be collected by
+    // rewriting a message the upstream already cached. Caching targets therefore get no
+    // rewrite at all; non-caching targets keep the legacy behaviour (history rewritten,
+    // live turn protected).
+    // `freezeSentHistory` is the legacy config spelling of the same guarantee; keep
+    // accepting it so an explicit opt-in does not silently start rewriting again.
+    const preservePrefix =
       stepConfig["freezeSentHistory"] === true ||
       providerSupportsCaching(options?.provider, options?.targetFormat, undefined, options?.model);
-    // Frozen: only the live turn may be rewritten (eligible from currentTurnStart,
-    // nothing protected above it). Default: history is rewritten, the live turn is
-    // protected — the legacy "never rewrite what the model just read" contract.
-    const protectFromIndex = freezeSentHistory ? Number.MAX_SAFE_INTEGER : currentTurnStart;
-    const eligibleFromIndex = freezeSentHistory ? currentTurnStart : 0;
+    if (preservePrefix) {
+      return { body, compressed: false, stats: null };
+    }
+
+    const currentTurnStart = calculateCurrentTurnStart(messages as MessageLike[]);
 
     const start = performance.now();
     const { messages: exactMessages, dedupCount } = processMessages(
       messages as MessageLike[],
       minBlockChars,
-      protectFromIndex,
-      eligibleFromIndex
+      currentTurnStart
     );
 
     const { messages: finalMessages, fuzzyCount } = runFuzzyPass(
@@ -575,7 +588,7 @@ export const sessionDedupEngine: CompressionEngine = {
       minBlockChars,
       options?.principalId,
       callerSupportsCcrRetrieve(body),
-      protectFromIndex
+      currentTurnStart
     );
 
     if (dedupCount + fuzzyCount === 0) {

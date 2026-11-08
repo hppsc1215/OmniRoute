@@ -1,102 +1,212 @@
 /**
- * session-dedup must not rewrite history that is inside the prompt-cache prefix.
+ * session-dedup must leave a prompt-cache target byte-identical, turn after turn.
  *
- * The engine rewrites the LONGEST suffix block that also appeared in an EARLIER
- * message. Its "never touch the current turn" guard is `calculateCurrentTurnStart()`
- * = index after the last assistant message — a boundary defined from the END of the
- * array, so it moves forward every turn: a message that was the protected current
- * turn in request N becomes rewritable history in request N+1, and its bytes change
- * retroactively. For a caching-capable target that invalidates the whole cached
- * prefix from that message onwards (observed: an old tool result replaced with
- * `[dedup:ref sha=…]` two turns after it had been sent upstream).
+ * Anthropic-style prefix caching is byte-exact: request N+1 reuses cached tokens only up
+ * to the first message whose serialized bytes differ from request N. A rewrite is
+ * therefore cache-safe only when the emitted form of message i is a pure function of
+ * messages 0..i — independent of how many messages follow it.
+ *
+ * The engine keyed its "never rewrite the current turn" guard on
+ * `calculateCurrentTurnStart()` (the index after the last assistant message), a boundary
+ * measured from the END of the array. It moves forward every turn, so the message that
+ * was protected in request N becomes rewritable history in N+1 and its bytes change
+ * retroactively. The `freezeSentHistory` follow-up inverted the direction without fixing
+ * it: the live-turn tool result was emitted as `[dedup:ref sha=…]` in request N and as
+ * the original text in request N+1 (the reviewer's probe, reproduced below).
+ *
+ * Fixed by not rewriting caching targets at all:
+ *  - protecting the live turn AND freezing sent history is provably a no-op — every
+ *    message is protected while it is live and frozen afterwards, so the only rewrite
+ *    that ever survives is the live turn, exactly the bytes that change next turn;
+ *  - rewriting every duplicate regardless of position is position-stable but hides the
+ *    tool result the model just asked for behind a marker nothing resolves
+ *    (`__sessionDedupMap__` is documented but never attached), so the model re-reads the
+ *    file and that re-read is deduped again — forever;
+ *  - a cache read bills at a fraction of the input price, while a broken prefix re-bills
+ *    every token from the rewritten message onwards at the cache-write price, so a
+ *    dedup marker can only pay off by invalidating the prefix it lives in.
+ *
+ * Non-caching targets keep the legacy behaviour and are asserted as such.
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import { sessionDedupEngine } from "../../../open-sse/services/compression/engines/session-dedup/index.ts";
 
+/** Reviewer's probe: an 11-line block repeated from a user message into a tool result. */
 const BLOCK = `function expensiveCalc(x) {
-  // step 1
-  const a = x * 2;
-  // step 2
-  const b = a + 100;
-  // step 3
-  return b;
+  // padding line 1
+  // padding line 2
+  // padding line 3
+  // padding line 4
+  // padding line 5
+  // padding line 6
+  // padding line 7
+  // padding line 8
+  // padding line 9
+  return x * 2;
 }`;
 
-type Msg = { role: string; content: string };
+type Msg = { role: string; content: string; tool_call_id?: string };
+type Body = { model: string; messages: Msg[]; tools?: unknown[] };
+type Target = { provider: string; targetFormat: string; model: string };
 
-/** A conversation whose turn-1 message repeats verbatim in a later history turn. */
-function conversation(): { model: string; messages: Msg[] } {
-  return {
-    model: "claude-haiku-5.5",
-    messages: [
-      { role: "user", content: `Here is the code:\n${BLOCK}` },
-      { role: "assistant", content: "Understood." },
-      { role: "user", content: `Review it again please:\n${BLOCK}` },
-      { role: "assistant", content: "Looks fine." },
-      { role: "user", content: "run the tests" },
-      { role: "assistant", content: "Running tests now." },
-      { role: "user", content: "test output: 3 passing" },
-    ],
-  };
+const CCR_RETRIEVE_TOOL = {
+  type: "function",
+  function: { name: "omniroute_ccr_retrieve", description: "retrieve a stored block" },
+};
+
+/**
+ * Turn-by-turn growth of one conversation (same prefix + a new turn each time), with the
+ * repeated block appearing in the first user message, in a tool result, and again in a
+ * later user message and tool result.
+ */
+function conversationTurns(): Msg[][] {
+  const t1: Msg[] = [
+    { role: "user", content: `Here is the code:\n${BLOCK}` },
+    { role: "assistant", content: "Reading the file again." },
+    { role: "tool", tool_call_id: "t1", content: `file contents:\n${BLOCK}` },
+  ];
+  const t2: Msg[] = [
+    ...t1,
+    { role: "assistant", content: "Now running tests." },
+    { role: "tool", tool_call_id: "t2", content: "3 passing" },
+  ];
+  const t3: Msg[] = [
+    ...t2,
+    { role: "user", content: `Same block again, please:\n${BLOCK}` },
+    { role: "assistant", content: "Running the tests again." },
+    { role: "tool", tool_call_id: "t3", content: `file contents:\n${BLOCK}` },
+  ];
+  return [t1, t2, t3];
 }
 
-function applyDedup(
-  body: { model: string; messages: Msg[] },
-  provider?: string,
+const CACHING_TARGETS: Target[] = [
+  // ghe-copilot / github dispatch Claude models to Copilot's native /v1/messages shim.
+  { provider: "ghe-copilot", targetFormat: "claude", model: "claude-haiku-5.5" },
+  { provider: "github", targetFormat: "claude", model: "claude-sonnet-5" },
+  { provider: "claude", targetFormat: "claude", model: "claude-sonnet-5" },
+  // OpenAI-format automatic prefix caching (#3955).
+  { provider: "openai", targetFormat: "openai", model: "gpt-5.1" },
+];
+
+function apply(
+  body: Body,
+  target?: Target,
   stepConfig: Record<string, unknown> = {}
-) {
-  return sessionDedupEngine.apply(structuredClone(body), {
+): { body: Record<string, unknown>; compressed: boolean } {
+  return sessionDedupEngine.apply(structuredClone(body) as Record<string, unknown>, {
     stepConfig,
-    ...(provider ? { provider, targetFormat: "claude" } : {}),
+    ...(target ?? {}),
   });
 }
 
-describe("session-dedup cache freeze", () => {
-  it("freezes already-sent history for a caching-capable target", () => {
-    const body = conversation();
-    const result = applyDedup(body, "ghe-copilot");
-    assert.deepEqual(
-      result.body.messages,
-      body.messages,
-      "no message that is already part of the cached prefix may be rewritten"
+function messagesOf(body: Record<string, unknown>): Msg[] {
+  return body["messages"] as Msg[];
+}
+
+/** The property under test: the emitted prefix may not change when the tail grows. */
+function assertPrefixStable(previous: Msg[], next: Msg[], label: string): void {
+  assert.ok(
+    next.length > previous.length,
+    `${label}: the grown request must contain the previous request as its prefix`
+  );
+  for (let i = 0; i < previous.length; i++) {
+    assert.equal(
+      JSON.stringify(next[i]),
+      JSON.stringify(previous[i]),
+      `${label}: message ${i} (role=${previous[i].role}) was emitted as different bytes — ` +
+        `the upstream prompt cache resets from here on.\n` +
+        `  request N  : ${JSON.stringify(previous[i])}\n` +
+        `  request N+1: ${JSON.stringify(next[i])}`
     );
-    assert.equal(result.compressed, false);
+  }
+}
+
+describe("session-dedup prompt-cache prefix stability", () => {
+  for (const target of CACHING_TARGETS) {
+    it(`emits every sent message unchanged on every turn (${target.provider})`, () => {
+      const outputs = conversationTurns().map((messages) =>
+        messagesOf(apply({ model: target.model, messages }, target).body)
+      );
+
+      for (let t = 1; t < outputs.length; t++) {
+        assertPrefixStable(outputs[t - 1], outputs[t], `${target.provider} turn ${t}->${t + 1}`);
+      }
+    });
+  }
+
+  it("reproduces the reviewer's probe: the live-turn tool result is not swapped for a marker", () => {
+    const target = CACHING_TARGETS[0];
+    const [t1, t2] = conversationTurns();
+
+    const requestN = messagesOf(apply({ model: target.model, messages: t1 }, target).body);
+    const requestN1 = messagesOf(apply({ model: target.model, messages: t2 }, target).body);
+
+    // Turn N: the tool result is the live turn. Turn N+1: it is history. Same bytes.
+    assert.equal(
+      requestN[2].content,
+      `file contents:\n${BLOCK}`,
+      "the live tool result must reach the model verbatim (no `[dedup:ref …]`)"
+    );
+    assert.equal(
+      requestN1[2].content,
+      `file contents:\n${BLOCK}`,
+      "the same message must still be verbatim on the next turn"
+    );
+    assert.equal(JSON.stringify(requestN1[2]), JSON.stringify(requestN[2]));
+    assert.equal(requestN[2].content.includes("[dedup:ref"), false);
   });
 
-  it("still dedups history when the target has no prompt cache (legacy behaviour)", () => {
-    const body = conversation();
-    const result = applyDedup(body);
-    assert.equal(result.compressed, true, "legacy path must keep deduplicating history");
-    const rewritten = (result.body.messages as Msg[]).filter((m) =>
-      m.content.includes("[dedup:ref")
-    );
-    assert.equal(rewritten.length, 1);
-    assert.equal(
-      (result.body.messages[0] as Msg).content.includes("[dedup:ref"),
-      false,
-      "first occurrence kept"
-    );
+  it("never rewrites a caching target at all, with or without fuzzy enabled", () => {
+    const target = CACHING_TARGETS[0];
+    for (const stepConfig of [{}, { fuzzy: { enabled: true } }, { minBlockChars: 20 }]) {
+      for (const messages of conversationTurns()) {
+        const body: Body = {
+          model: target.model,
+          messages,
+          tools: [CCR_RETRIEVE_TOOL],
+        };
+        const result = apply(body, target, stepConfig);
+        assert.equal(result.compressed, false, `no rewrite for ${JSON.stringify(stepConfig)}`);
+        assert.equal(
+          JSON.stringify(messagesOf(result.body)),
+          JSON.stringify(messages),
+          "the request body must be emitted byte-identically"
+        );
+      }
+    }
   });
 
   it("honours the freezeSentHistory step flag even without a provider", () => {
-    const body = conversation();
-    const result = applyDedup(body, undefined, { freezeSentHistory: true });
-    assert.deepEqual(result.body.messages, body.messages);
+    for (const messages of conversationTurns()) {
+      const result = apply({ model: "claude-haiku-5.5", messages }, undefined, {
+        freezeSentHistory: true,
+      });
+      assert.equal(result.compressed, false);
+      assert.equal(JSON.stringify(messagesOf(result.body)), JSON.stringify(messages));
+    }
   });
 
-  it("keeps rewriting the live turn (bounded tail churn) when frozen", () => {
-    // The newest tool result repeats an earlier block: it may be deduped, because it
-    // is the tail of the prefix — losing one turn of cache is cheaper than re-sending it.
-    const body = conversation();
-    body.messages.push({ role: "assistant", content: "checking the diff" });
-    body.messages.push({ role: "user", content: `diff context:\n${BLOCK}` });
-    const result = applyDedup(body, "ghe-copilot");
-    const last = (result.body.messages as Msg[]).at(-1)!;
-    assert.ok(last.content.includes("[dedup:ref"), "the live turn may still be compressed");
-    // …and every earlier message must be byte-identical to what the client sent.
-    const prefix = (result.body.messages as Msg[]).slice(0, -1);
-    assert.deepEqual(prefix, body.messages.slice(0, -1));
+  it("still dedups history for a non-caching target (legacy behaviour unchanged)", () => {
+    const [t1, t2] = conversationTurns();
+    const target: Target = {
+      provider: "ollama",
+      targetFormat: "openai",
+      model: "qwen3-coder",
+    };
+
+    // Turn 1: the repeated block is the live tool result — protected, as before.
+    const first = apply({ model: target.model, messages: t1 }, target);
+    assert.equal(first.compressed, false, "the live turn must stay protected");
+    assert.equal(JSON.stringify(messagesOf(first.body)), JSON.stringify(t1));
+
+    // Turn 2: the same message is history now — rewritten, as before.
+    const second = apply({ model: target.model, messages: t2 }, target);
+    assert.equal(second.compressed, true, "legacy path must keep deduplicating history");
+    const rewritten = messagesOf(second.body);
+    assert.equal(rewritten[0].content, t2[0].content, "first occurrence kept intact");
+    assert.match(rewritten[2].content, /^file contents:\n\[dedup:ref sha=[0-9a-f]{24}\]$/);
+    assert.equal(rewritten[4].content, "3 passing", "live turn still untouched");
   });
 });
