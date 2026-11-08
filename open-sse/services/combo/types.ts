@@ -235,6 +235,12 @@ export type ResolvedComboTarget = {
   prompt?: string | null;
   failoverBeforeRetry?: unknown;
   fallbackOnlyOnQuotaExhaustion?: boolean;
+  /**
+   * Largest prompt (tokens) this target may serve. Requests whose estimated
+   * prompt exceeds it skip the target before dispatch — the long-context
+   * tiering guard, see `./promptTokenCeiling.ts`.
+   */
+  maxPromptTokens?: number;
   trafficType?: "production" | "shadow";
   /**
    * Fingerprint-based account pin resolved from a combo builder composite

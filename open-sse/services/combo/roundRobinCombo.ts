@@ -140,6 +140,10 @@ import {
 import { releaseStickyPinOnFailure, clearStaleLKGP } from "../combo.ts";
 import { resolveComboDailyReset } from "./comboDailyResetClock.ts";
 import { resolveTargetTokenLimit } from "./targetTokenLimit.ts";
+import {
+  applyPromptTokenCeilings,
+  buildPromptTokenCeilingResponse,
+} from "./promptTokenCeiling.ts";
 import { isProviderProbeResponse } from "../../../src/shared/utils/providerProbeResult.ts";
 import { recordLocalCircuitRefusal } from "./localCircuitRefusal.ts";
 
@@ -277,6 +281,25 @@ export async function handleRoundRobinCombo({
     filteredTargets,
     body
   );
+  // Long-context price-tier guard: drop targets whose `maxPromptTokens` the
+  // estimated prompt exceeds. Applied AFTER the compat-rejected snapshot so a
+  // ceiling exclusion can never be resurrected as a last-resort fallback tier.
+  const promptTokenCeilings = applyPromptTokenCeilings({
+    targets: filteredTargets,
+    body,
+    config: config as Record<string, unknown>,
+    log,
+  });
+  if (promptTokenCeilings.excluded.length > 0) {
+    if (promptTokenCeilings.targets.length === 0) {
+      return buildPromptTokenCeilingResponse({
+        comboName: rrExpandedCombo?.name || combo?.name,
+        poolSize: filteredTargets.length,
+        excluded: promptTokenCeilings.excluded,
+      });
+    }
+    filteredTargets = promptTokenCeilings.targets;
+  }
   let modelCount = filteredTargets.length;
   if (modelCount === 0) {
     const exhaustion = describeCapabilityFilterExhaustion(
