@@ -229,6 +229,34 @@ export function providerAcceptsClaudeCacheBreakpoints(
 }
 
 /**
+ * Exact set of request targets on which OmniRoute emits Anthropic `cache_control`
+ * breakpoints: a Claude-format leg served by an Anthropic-native Messages endpoint
+ * (native Anthropic, Vertex's Claude path, `anthropic-compatible-*`, and Copilot's
+ * `/v1/messages` shim). This is the provider half of `providerAcceptsClaudeCacheBreakpoints()`
+ * plus the wire-format half; `prepareClaudeRequest()` and the rolling layout in
+ * `claudeCacheBreakpoints.ts` place markers for exactly these targets.
+ *
+ * Deliberately NARROWER than `providerSupportsCaching()`, which also covers automatic
+ * prefix caches (OpenAI/Codex), Gemini-via-Antigravity and Claude-shape shims that reject
+ * unknown block fields. Only a target that actually receives breakpoints can lose a cache
+ * to a prompt rewrite, so compression engines gate their cache-frozen path on this
+ * predicate: antigravity/gemini, codex, kimi-coding and openai keep the legacy lite
+ * truncation and session-dedup rewriting byte-identically (their token savings are
+ * load-bearing), while ghe-copilot/claude, github, claude and vertex get byte-stable bodies.
+ */
+export function targetReceivesClaudeCacheBreakpoints(
+  provider: string | null | undefined,
+  targetFormat?: string | null,
+  connectionCacheOverride?: ConnectionCacheOverride | null
+): boolean {
+  return (
+    typeof targetFormat === "string" &&
+    targetFormat.toLowerCase() === "claude" &&
+    providerAcceptsClaudeCacheBreakpoints(provider, connectionCacheOverride)
+  );
+}
+
+/**
  * Whether client-supplied `cache_control` markers can be forwarded to the routed
  * transport at all. This is about the WIRE SHAPE, not about the provider's
  * caching capability: a Claude-format leg only accepts `cache_control` block

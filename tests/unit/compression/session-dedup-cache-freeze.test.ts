@@ -82,11 +82,26 @@ function conversationTurns(): Msg[][] {
 }
 
 const CACHING_TARGETS: Target[] = [
-  // ghe-copilot / github dispatch Claude models to Copilot's native /v1/messages shim.
+  // ghe-copilot / github dispatch Claude models to Copilot's native /v1/messages shim,
+  // which is exactly where this branch emits Anthropic cache_control breakpoints.
   { provider: "ghe-copilot", targetFormat: "claude", model: "claude-haiku-5.5" },
   { provider: "github", targetFormat: "claude", model: "claude-sonnet-5" },
   { provider: "claude", targetFormat: "claude", model: "claude-sonnet-5" },
-  // OpenAI-format automatic prefix caching (#3955).
+  { provider: "vertex", targetFormat: "claude", model: "claude-sonnet-5" },
+  { provider: "anthropic-compatible-local", targetFormat: "claude", model: "claude-sonnet-5" },
+];
+
+/**
+ * Caching-CAPABLE targets that receive no Anthropic cache_control breakpoint layout:
+ * Gemini via Antigravity (the largest lite consumer in production — its savings are
+ * load-bearing for the 25s relay budget), Codex's automatic prefix cache, plain
+ * OpenAI-format routes and OpenAI itself. Only targets that carry breakpoints can lose a
+ * cached prefix to a rewrite, so these must stay byte-identical to `custom`.
+ */
+const NO_BREAKPOINT_TARGETS: Target[] = [
+  { provider: "antigravity", targetFormat: "gemini", model: "gemini-3.8-flash-tiered" },
+  { provider: "codex", targetFormat: "openai-responses", model: "gpt-6-luna" },
+  { provider: "opencode-go", targetFormat: "openai", model: "deepseek-v4.1-flash" },
   { provider: "openai", targetFormat: "openai", model: "gpt-5.1" },
 ];
 
@@ -209,4 +224,24 @@ describe("session-dedup prompt-cache prefix stability", () => {
     assert.match(rewritten[2].content, /^file contents:\n\[dedup:ref sha=[0-9a-f]{24}\]$/);
     assert.equal(rewritten[4].content, "3 passing", "live turn still untouched");
   });
+
+  // Regression guard for the over-broad first cut of this fix: `providerSupportsCaching()`
+  // also covers antigravity/gemini (the largest lite consumer in production), codex and
+  // openai. None of them receives a cache_control breakpoint layout, so freezing them
+  // silently disabled their compression. They must keep the legacy rewrite.
+  for (const target of NO_BREAKPOINT_TARGETS) {
+    it(`still dedups history where no breakpoints are placed (${target.provider}/${target.model})`, () => {
+      const [t1, t2] = conversationTurns();
+
+      const first = apply({ model: target.model, messages: t1 }, target);
+      assert.equal(first.compressed, false, "the live turn must stay protected");
+
+      const second = apply({ model: target.model, messages: t2 }, target);
+      assert.equal(second.compressed, true, "dedup must keep running on this target");
+      const rewritten = messagesOf(second.body);
+      assert.equal(rewritten[0].content, t2[0].content, "first occurrence kept intact");
+      assert.match(rewritten[2].content, /^file contents:\n\[dedup:ref sha=[0-9a-f]{24}\]$/);
+      assert.equal(rewritten[4].content, "3 passing", "live turn still untouched");
+    });
+  }
 });

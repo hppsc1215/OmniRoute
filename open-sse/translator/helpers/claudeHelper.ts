@@ -466,17 +466,16 @@ export function prepareClaudeRequest(
   // 1. System: remove all cache_control, add only to the last block with the provider TTL
   // In passthrough mode, preserve existing cache_control markers
   const isVertexClaudeProvider = provider === "vertex" || provider === "vertex-partner";
-  // Caching-capable Claude upstreams get breakpoints. `supportsPromptCaching` used to be
-  // a hardcoded Anthropic-native allowlist (claude/vertex/anthropic-compatible-*), which
-  // silently excluded Claude-format providers routed to an Anthropic Messages shim
+  // Caching-capable Claude upstreams get breakpoints. The provider set lives in
+  // `providerAcceptsClaudeCacheBreakpoints()` and is shared with the compression engines
+  // (`targetReceivesClaudeCacheBreakpoints()` = this predicate on a Claude-format leg): a
+  // prompt rewrite is only unsafe where this branch actually places markers. `supportsPromptCaching`
+  // used to be a hardcoded Anthropic-native allowlist (claude/vertex/anthropic-compatible-*),
+  // which silently excluded Claude-format providers routed to an Anthropic Messages shim
   // (ghe-copilot, github). For those the strip passes below still ran, so every marker the
   // OpenAI->Claude translator had placed was deleted and NONE was re-added: the upstream
   // got zero breakpoints and every turn re-billed the full prompt (cache_write=0).
-  const supportsPromptCaching =
-    provider === "claude" ||
-    isVertexClaudeProvider ||
-    provider?.startsWith?.("anthropic-compatible-") ||
-    providerAcceptsClaudeCacheBreakpoints(provider);
+  const supportsPromptCaching = providerAcceptsClaudeCacheBreakpoints(provider);
   // The Claude-Code-style layout below (system + second-to-last user + last
   // assistant) stops one turn short: the newest message — usually the tool result
   // the agent just has to read — is never covered, so every turn re-writes the

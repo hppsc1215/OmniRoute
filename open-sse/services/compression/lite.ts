@@ -2,6 +2,7 @@ import { isVisionModelId } from "@/shared/constants/visionModels";
 import type { CompressionResult, CompressionMode } from "./types.ts";
 import { createCompressionStats } from "./stats.ts";
 import { isResponsesToolOutputMessage } from "./bodyAdapter.ts";
+import { targetReceivesClaudeCacheBreakpoints } from "../../utils/cacheControlPolicy.ts";
 
 interface Message {
   role: string;
@@ -20,6 +21,9 @@ interface LiteCompressionOptions {
   preserveSystemPrompt?: boolean;
   compressToolResults?: boolean;
   maxToolLength?: number;
+  /** Resolved upstream provider / wire format of the target (same plumbing as session-dedup). */
+  provider?: string | null;
+  targetFormat?: string | null;
 }
 
 const DEFAULT_MAX_TOOL_LENGTH = 2000;
@@ -231,6 +235,38 @@ function truncateToolResultBlocks(
     : { message: msg, applied: false };
 }
 
+/**
+ * Compression must be byte-stable for exactly the targets that receive Anthropic cache_control
+ * breakpoints — no more.
+ *
+ * Anthropic-style prefix caching reuses tokens only up to the first message whose serialized
+ * bytes differ from the previous request, so a transform is cache-safe only when the emitted
+ * form of message i is a pure function of messages 0..i — never of "how many messages follow".
+ *
+ * `compressToolResults()` is the one lite transform that breaks that rule: it protects the
+ * "current turn" (the messages after the last assistant message) and truncates everything
+ * before it to MAX_TOOL_LENGTH, but that boundary is measured from the END of the array. It
+ * moves forward every turn, so a tool result request N emitted whole (it was the live turn) is
+ * truncated in request N+1: the prefix cache breaks at that message and every token from it
+ * onwards is re-billed at the cache-write price — far more than the cap saves. Measured on
+ * ghe-copilot/claude-haiku-5.5 (2026-11-07, stacked [session-dedup, lite]): lite "saved"
+ * 66,968 tokens/call while breaking the cached prefix on nearly every agent turn.
+ *
+ * The gate is `targetReceivesClaudeCacheBreakpoints()`, NOT the broader
+ * `providerSupportsCaching()`: targets without a breakpoint layout (antigravity/gemini — the
+ * largest lite consumer, codex, kimi-coding, plain openai) keep the legacy truncation, because
+ * their savings are load-bearing (antigravity's 25s relay timeout) and no breakpoint bytes are
+ * lost by rewriting them.
+ *
+ * The remaining transforms are position-stable and stay enabled for every target:
+ * `collapseWhitespace` and `replaceImageUrls` are pure per-message functions, while
+ * `dedupSystemPrompt` and `removeRedundantContent` only look at messages before the current
+ * one.
+ */
+function isPromptCacheTarget(options: LiteCompressionOptions): boolean {
+  return targetReceivesClaudeCacheBreakpoints(options.provider, options.targetFormat);
+}
+
 export function compressToolResults(
   body: ChatBody,
   options: LiteCompressionOptions = {}
@@ -239,6 +275,8 @@ export function compressToolResults(
   applied: boolean;
 } {
   if (!body.messages) return { body, applied: false };
+  if (isPromptCacheTarget(options)) return { body, applied: false };
+
   const MAX_TOOL_LENGTH = resolveLiteMaxToolLength(options.maxToolLength);
   // Results of the latest tool calls (after the last assistant message) are
   // what the model asked for this turn. Cutting them makes it re-read the same

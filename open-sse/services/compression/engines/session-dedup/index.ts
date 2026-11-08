@@ -36,7 +36,7 @@
 
 import crypto from "node:crypto";
 import { createCompressionStats } from "../../stats.ts";
-import { providerSupportsCaching } from "../../../../utils/cacheControlPolicy.ts";
+import { targetReceivesClaudeCacheBreakpoints } from "../../../../utils/cacheControlPolicy.ts";
 import { runFuzzyPass } from "./fuzzy.ts";
 import { callerSupportsCcrRetrieve } from "../ccr/protocolInstruction.ts";
 import type {
@@ -566,9 +566,13 @@ export const sessionDedupEngine: CompressionEngine = {
     // live turn protected).
     // `freezeSentHistory` is the legacy config spelling of the same guarantee; keep
     // accepting it so an explicit opt-in does not silently start rewriting again.
+    // The target gate is `targetReceivesClaudeCacheBreakpoints()` — exactly the targets
+    // where this branch emits Anthropic cache_control breakpoints — NOT the broader
+    // `providerSupportsCaching()`: antigravity/gemini, codex, kimi-coding and openai have no
+    // breakpoint layout to lose, and their dedup savings are load-bearing.
     const preservePrefix =
       stepConfig["freezeSentHistory"] === true ||
-      providerSupportsCaching(options?.provider, options?.targetFormat, undefined, options?.model);
+      targetReceivesClaudeCacheBreakpoints(options?.provider, options?.targetFormat);
     if (preservePrefix) {
       return { body, compressed: false, stats: null };
     }
