@@ -27,6 +27,8 @@ type QuotaLike = { used?: number; total?: number; remainingPercentage?: number }
 type UsageLike = {
   quotas?: Record<string, QuotaLike>;
   message?: string | null;
+  _passive?: boolean;
+  _observedAt?: string;
   _stale?: boolean;
   _staleSince?: string;
 };
@@ -76,9 +78,12 @@ test("a fresh snapshot answers without probing the tenant", () => {
   assert.equal(usage.quotas?.premium_interactions.used, 988);
   assert.equal(usage.quotas?.premium_interactions.total, 5000);
   assert.equal(usage.message, null);
-  // The reading time is the last chat response, not "now".
-  assert.equal(usage._stale, true);
-  assert.equal(usage._staleSince, "2026-11-08T09:59:00.000Z");
+  // The reading time is the last chat response, not "now" — and a passive read
+  // is a successful read of a different source, never a stale/failed probe.
+  assert.equal(usage._passive, true);
+  assert.equal(usage._observedAt, "2026-11-08T09:59:00.000Z");
+  assert.equal(usage._stale, undefined);
+  assert.equal(usage._staleSince, undefined);
 });
 
 test("a snapshot older than the freshness window defers to the live probe", () => {
@@ -124,7 +129,8 @@ test("a live probe with no quota degrades to the captured snapshot", () => {
 
   assert.equal(merged.quotas?.premium_interactions.used, 988);
   assert.equal(merged.message, null);
-  assert.equal(merged._stale, true);
+  assert.equal(merged._passive, true);
+  assert.equal(merged._stale, undefined);
 });
 
 test("without any snapshot the live answer is passed through untouched", () => {

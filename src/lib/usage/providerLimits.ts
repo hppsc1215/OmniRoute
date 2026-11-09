@@ -31,9 +31,17 @@ import { getMachineId } from "@/shared/utils/machine";
 import { supportsProviderQuota } from "@/shared/utils/providerQuotaVisibility";
 import {
   buildProviderLimitsCacheEntry,
-  PASSIVE_COPILOT_STALE_REASON,
+  resolveCopilotPassiveUsage,
+  withPassiveCopilotQuotaFallback,
 } from "./providerLimitsQuotaMerge";
-import { readPassiveGitHubQuotaSnapshot } from "./githubQuotaSnapshotStore";
+
+// The passive-Copilot read policy lives in the leaf merge module; it is
+// re-exported here because this module is the public surface callers/tests use.
+export {
+  GHE_PASSIVE_SNAPSHOT_FRESH_MS,
+  resolveCopilotPassiveUsage,
+  withPassiveCopilotQuotaFallback,
+} from "./providerLimitsQuotaMerge";
 import { getCredentialRefreshExecutor } from "@omniroute/open-sse/executors/credential.ts";
 import { getUsageForProvider } from "@omniroute/open-sse/services/usage.ts";
 import {
@@ -222,68 +230,6 @@ function shouldRefreshProviderLimitsCache(
         )
     )
   );
-}
-
-/**
- * GHE Copilot (`ghe-copilot`) has no reachable quota endpoint: its AI-credit
- * windows are captured passively from `x-quota-snapshot-*` response headers on
- * the chat path (`githubQuotaCapture.ts`) and persisted in the Provider Limits
- * cache + quota snapshots (`githubQuotaSnapshotStore.ts`).
- *
- * A snapshot younger than this is authoritative — no point probing the tenant.
- */
-export const GHE_PASSIVE_SNAPSHOT_FRESH_MS = 45 * 60_000;
-
-function copilotPassiveSnapshotUsage(
-  snapshot: NonNullable<ReturnType<typeof readPassiveGitHubQuotaSnapshot>>
-): JsonRecord {
-  return {
-    quotas: snapshot.quotas,
-    message: null,
-    // The observation time is the last chat response that carried the headers,
-    // not "now" — keep it so the UI can say how old the reading is.
-    _stale: true,
-    ...(snapshot.observedAt ? { _staleSince: snapshot.observedAt } : {}),
-    _staleReason: PASSIVE_COPILOT_STALE_REASON,
-  };
-}
-
-/**
- * Fresh passive Copilot quota as a usage envelope, or null when the connection
- * has never produced one (or the reading is older than the freshness window).
- */
-export function resolveCopilotPassiveUsage(
-  provider: string | null | undefined,
-  connectionId: string | null | undefined,
-  nowMs: number = Date.now()
-): JsonRecord | null {
-  if (provider !== "ghe-copilot") return null;
-
-  const snapshot = readPassiveGitHubQuotaSnapshot(connectionId);
-  if (!snapshot || Object.keys(snapshot.quotas).length === 0) return null;
-
-  const observedMs = snapshot.observedAt ? Date.parse(snapshot.observedAt) : Number.NaN;
-  if (!Number.isFinite(observedMs) || nowMs - observedMs >= GHE_PASSIVE_SNAPSHOT_FRESH_MS) {
-    return null;
-  }
-  return copilotPassiveSnapshotUsage(snapshot);
-}
-
-/**
- * Keep a captured Copilot snapshot as the answer when the live fetch produced no
- * quota (tenant endpoint missing, expired token, throttled probe).
- */
-export function withPassiveCopilotQuotaFallback(
-  provider: string | null | undefined,
-  connectionId: string | null | undefined,
-  usage: JsonRecord
-): JsonRecord {
-  if (provider !== "ghe-copilot") return usage;
-  if (isRecord(usage?.quotas) && Object.keys(usage.quotas).length > 0) return usage;
-
-  const snapshot = readPassiveGitHubQuotaSnapshot(connectionId);
-  if (!snapshot) return usage;
-  return { ...usage, ...copilotPassiveSnapshotUsage(snapshot) };
 }
 
 export function isSupportedUsageConnection(connection: ProviderConnectionLike | null): boolean {
@@ -1123,10 +1069,16 @@ async function fetchLiveProviderLimitsWithOptions(
       }
 
       // GHE Copilot (#ghe-copilot-quota): the AI-credit windows are captured
-      // passively from the connection's own response headers. While that snapshot
-      // is fresh there is nothing to poll — and a GHE tenant may not expose
-      // copilot_internal/user at all, so a probe would only 404 every sync.
-      const passiveCopilotUsage = resolveCopilotPassiveUsage(conn.provider, conn.id);
+      // passively from the connection's own response headers. Background syncs
+      // serve that snapshot while it is fresh — there is nothing to poll. A
+      // user-triggered refresh (`forceRefresh`, set by the /api/usage route via
+      // source="manual") must not short-circuit here: the tenant DOES expose
+      // /api/v3/copilot_internal/user (verified live), and only a real probe can
+      // move an empty or older snapshot forward. The passive snapshot stays the
+      // fallback through `withPassiveCopilotQuotaFallback` below.
+      const passiveCopilotUsage = options.forceRefresh
+        ? null
+        : resolveCopilotPassiveUsage(conn.provider, conn.id);
       if (passiveCopilotUsage) {
         connection = conn;
         return {

@@ -25,8 +25,7 @@ import {
 
 const PREMIUM =
   "crUsed=988&ent=5000&ov=0.0&ovPerm=true&rem=80.2&rst=2026-12-01T00%3A00%3A00Z&totRem=4012.5";
-const CHAT =
-  "crUsed=0&ent=-1&ov=0.0&ovPerm=false&rem=100.0&rst=2026-12-01T00%3A00%3A00Z&totRem=-1";
+const CHAT = "crUsed=0&ent=-1&ov=0.0&ovPerm=false&rem=100.0&rst=2026-12-01T00%3A00%3A00Z&totRem=-1";
 const COMPLETIONS =
   "crUsed=0&ent=-1&ov=0.0&ovPerm=false&rem=100.0&rst=2026-12-01T00%3A00%3A00Z&totRem=-1";
 
@@ -88,10 +87,7 @@ test("accepts a Headers-like object (real provider responses) as well as a plain
 });
 
 test("returns null when the response carries no quota snapshot header", () => {
-  assert.equal(
-    parseGitHubQuotaHeaders(headers({ "content-type": "application/json" })),
-    null
-  );
+  assert.equal(parseGitHubQuotaHeaders(headers({ "content-type": "application/json" })), null);
   assert.equal(parseGitHubQuotaHeaders(null), null);
   assert.equal(parseGitHubQuotaHeaders(undefined), null);
   assert.equal(parseGitHubQuotaHeaders({}), null);
@@ -160,6 +156,24 @@ test("derives the missing half of used/entitlement when one side is absent", () 
   assert.ok(onlyRemaining);
   assert.equal(onlyRemaining.used, 4000);
   assert.equal(onlyRemaining.remainingPercentage, 20);
+});
+
+test("a lagging crUsed is re-derived from totRem so one window stays arithmetically consistent", () => {
+  // Measured live: the credits counter lagged the remaining balance by ~63
+  // credits (1011 + 3925.6 = 4936.6, not 5000). `totRem` is the fresher field.
+  const window = parseGitHubQuotaSnapshotHeader("crUsed=1011&ent=5000&totRem=3925.6&rem=78.5");
+  assert.ok(window);
+  assert.equal(window.used, 1074.4);
+  assert.equal(window.remaining, 3925.6);
+  assert.equal(window.entitlement, 5000);
+  assert.ok(Math.abs(window.used + window.remaining - window.entitlement) < 1e-9);
+  assert.ok(Math.abs(window.remainingPercentage - 78.512) < 1e-9);
+
+  // Rounding differences (≤ 0.5) keep the reported used value untouched.
+  const consistent = parseGitHubQuotaSnapshotHeader("crUsed=1078&ent=5000&totRem=3922.1");
+  assert.ok(consistent);
+  assert.equal(consistent.used, 1078);
+  assert.equal(consistent.remaining, 3922.1);
 });
 
 test("clamps inconsistent upstream numbers instead of exceeding 100%", () => {

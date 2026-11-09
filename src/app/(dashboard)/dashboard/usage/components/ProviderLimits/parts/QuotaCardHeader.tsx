@@ -56,6 +56,12 @@ export default function QuotaCardHeader({
     emailsVisible,
     connection.provider
   );
+  // The dashboard has no per-seat plan for a GHE tenant; "Enterprise" is the
+  // truthful tier and is translated instead of the raw "Unknown" fallback.
+  const tierLabel =
+    connection.provider === "ghe-copilot" && tierMeta.key === "enterprise"
+      ? translateUsageOrFallback(t, "tierEnterprise", "Enterprise")
+      : tierMeta.label;
 
   // OAuth token expiry — informative only. Shown small/blue for connections that
   // expose a concrete token expiry (e.g. Codex), so an operator can see at a
@@ -108,7 +114,7 @@ export default function QuotaCardHeader({
               }
             >
               <Badge variant={tierMeta.variant} size="sm" dot className="h-4 px-1.5 py-0 leading-4">
-                {tierMeta.label}
+                {tierLabel}
               </Badge>
             </span>
             {hasStaleData && (

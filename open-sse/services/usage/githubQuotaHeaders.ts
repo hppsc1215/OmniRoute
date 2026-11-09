@@ -232,12 +232,17 @@ export function parseGitHubQuotaSnapshotHeader(value: unknown): GitHubQuotaWindo
         : 0;
   if (entitlement > 0) remaining = Math.min(remaining, entitlement);
 
+  const reportedUsed = usedRaw !== null && usedRaw >= 0 ? usedRaw : null;
+  const derivedUsed = entitlement > 0 ? Math.max(0, entitlement - remaining) : null;
+  // `crUsed` and `totRem` arrive in the same header, but GitHub's counter can lag
+  // the remaining balance (observed live: crUsed=1011&ent=5000&totRem=3925.6,
+  // i.e. 1011 + 3925.6 ≠ 5000). `totRem` moves with every response, so it is the
+  // fresher field: when the two disagree by more than rounding, re-derive `used`
+  // from the entitlement. This keeps used + remaining = total for ONE observation.
   const used =
-    usedRaw !== null && usedRaw >= 0
-      ? usedRaw
-      : entitlement > 0
-        ? Math.max(0, entitlement - remaining)
-        : 0;
+    reportedUsed !== null && (derivedUsed === null || Math.abs(reportedUsed - derivedUsed) <= 0.5)
+      ? reportedUsed
+      : (derivedUsed ?? 0);
 
   // Prefer the arithmetic (totRem / ent) over the rounded `rem` field; fall back
   // to the reported percentage when entitlement is unknown.

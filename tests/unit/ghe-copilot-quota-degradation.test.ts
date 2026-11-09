@@ -278,12 +278,12 @@ test("an all-percentage-only sync result does not overwrite cached credit counts
   );
   // The raw conversion is still degraded…
   assert.equal(premium(next).used, 0);
-  // …but the persisted entry keeps the counts, drops the percentage-only flag,
-  // and still takes the fresh percentage.
+  // …but the persisted entry keeps the counts AND their percentage from the same
+  // observation: the newer incoming bar (79.7) is not mixed with older counts.
   assert.equal(premium(cache).used, USED);
   assert.equal(premium(cache).total, ENTITLEMENT);
   assert.equal(premium(cache).remaining, REMAINING);
-  assert.equal(premium(cache).remainingPercentage, 79.7);
+  assert.equal(premium(cache).remainingPercentage, 80.04);
   assert.equal(premium(cache).isPercentageOnly, undefined);
 });
 

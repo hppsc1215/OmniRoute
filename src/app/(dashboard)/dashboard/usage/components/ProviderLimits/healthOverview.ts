@@ -31,6 +31,9 @@ export interface HealthData {
   raw?: {
     fetchedAt?: string;
     _stale?: boolean;
+    /** Passive Copilot capture marker — a healthy read, never a degradation. */
+    _passive?: boolean;
+    _observedAt?: string;
     paidCredits?: CodexPaidCredits;
     quotas?: Record<string, Partial<HealthQuota>>;
     quotaGroups?: Array<{

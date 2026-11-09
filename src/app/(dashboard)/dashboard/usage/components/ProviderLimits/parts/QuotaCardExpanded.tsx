@@ -150,6 +150,8 @@ interface Props {
   paidCredits?: CodexPaidCredits;
   refreshedAt?: string;
   hasStaleData: boolean;
+  /** When set, the numbers came from a passive Copilot capture at this time. */
+  passiveObservedAt?: string | null;
   onRefresh: () => void;
   onOpenCutoff: () => void;
   onOpenCost: () => void;
@@ -349,6 +351,7 @@ export default function QuotaCardExpanded({
   paidCredits,
   refreshedAt,
   hasStaleData,
+  passiveObservedAt,
   onRefresh,
   onOpenCutoff,
   onOpenCost,
@@ -496,19 +499,32 @@ export default function QuotaCardExpanded({
 
       <div className="min-w-0 space-y-1.5 pt-1.5 border-t border-border/40">
         <div className="flex min-w-0 items-center justify-between gap-2">
-          {refreshedLabel && (
+          {passiveObservedAt && refreshedLabel ? (
             <span
-              className={`text-[10px] tabular-nums ${
-                hasStaleData ? "text-warning" : "text-text-muted"
-              }`}
-              title={
-                hasStaleData
-                  ? t("staleQuotaTooltip")
-                  : `${tr("lastRefreshed", "Last refreshed")}: ${refreshedLabel}`
-              }
+              className="text-[10px] tabular-nums text-text-muted"
+              title={tr(
+                "passiveQuotaTooltip",
+                "Captured from Copilot response headers on your last request — not a failed refresh."
+              )}
             >
-              {tr("updatedShort", "Updated")} {refreshedLabel}
+              {tr("passiveQuotaHint", "Captured from Copilot responses")} ·{" "}
+              {tr("passiveQuotaAsOf", "as of {time}", { time: refreshedLabel })}
             </span>
+          ) : (
+            refreshedLabel && (
+              <span
+                className={`text-[10px] tabular-nums ${
+                  hasStaleData ? "text-warning" : "text-text-muted"
+                }`}
+                title={
+                  hasStaleData
+                    ? t("staleQuotaTooltip")
+                    : `${tr("lastRefreshed", "Last refreshed")}: ${refreshedLabel}`
+                }
+              >
+                {tr("updatedShort", "Updated")} {refreshedLabel}
+              </span>
+            )
           )}
           <Button
             variant="outline"

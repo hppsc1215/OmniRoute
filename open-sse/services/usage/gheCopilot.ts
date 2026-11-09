@@ -12,8 +12,11 @@
  *
  *  2. ACTIVE — the tenant-scoped equivalent `<gheUrl>/api/v3/copilot_internal/user`,
  *     the same REST base `src/lib/oauth/providers/ghe-copilot.ts` already uses for
- *     `/api/v3/user` and `/api/v3/copilot_internal/v2/token`. Best-effort bootstrap
- *     only: a tenant that does not expose it (404/403) degrades to a message,
+ *     `/api/v3/user` and `/api/v3/copilot_internal/v2/token`. Verified live against
+ *     a GHE tenant: HTTP 200 with `quota_snapshots.premium_interactions`
+ *     (credits_used / remaining / entitlement / quota_reset_at) and `copilot_plan`.
+ *     It is used for a user-triggered refresh and as a bootstrap before the first
+ *     capture; a tenant that does not expose it (404/403) degrades to a message,
  *     never to an error state on the connection.
  *
  * This module is deliberately free of `src/` imports: the passive snapshot is

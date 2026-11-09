@@ -20,13 +20,19 @@
  */
 
 import type { ProviderLimitsCacheEntry } from "@/lib/db/providerLimits";
-import { PASSIVE_QUOTA_SOURCE } from "./githubQuotaSnapshotStore";
+import { readPassiveGitHubQuotaSnapshot, PASSIVE_QUOTA_SOURCE } from "./githubQuotaSnapshotStore";
 import { mergeProviderLimitsCacheEntry, toProviderLimitsCacheEntry } from "./providerLimitsCache";
 
 type JsonRecord = Record<string, unknown>;
 
-/** `_staleReason` stamped by the passive Copilot usage envelope. */
-export const PASSIVE_COPILOT_STALE_REASON = "Captured from GitHub Copilot response headers.";
+/**
+ * Reason stamped on the passive Copilot usage envelope.
+ *
+ * Kept as a stable string (not a boolean) so a persisted envelope can still be
+ * recognised without a DB read, and so `_passive` can never be confused with the
+ * `_stale` marker that means "the live probe failed".
+ */
+export const PASSIVE_COPILOT_REASON = "Captured from GitHub Copilot response headers.";
 
 function isRecord(value: unknown): value is JsonRecord {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -35,12 +41,18 @@ function isRecord(value: unknown): value is JsonRecord {
 /**
  * True when this usage envelope is the passively captured Copilot snapshot
  * rather than the product of a live quota probe.
+ *
+ * `_passive` is the only marker the passive envelope carries. The legacy
+ * `_stale` + reason pair is still recognised so an envelope produced before the
+ * split (or replayed from an old in-memory row) keeps classifying correctly —
+ * but a passive read is never *rendered* as stale, because it no longer sets
+ * `_stale`.
  */
 export function isPassiveCopilotQuotaUsage(provider: string, usage: JsonRecord): boolean {
+  if (provider !== "ghe-copilot") return false;
   return (
-    provider === "ghe-copilot" &&
-    usage._stale === true &&
-    usage._staleReason === PASSIVE_COPILOT_STALE_REASON
+    usage._passive === true ||
+    (usage._stale === true && usage._staleReason === PASSIVE_COPILOT_REASON)
   );
 }
 
@@ -74,9 +86,44 @@ function sameResetPeriod(incoming: JsonRecord, cached: JsonRecord): boolean {
 }
 
 /**
+ * One window's counts, always read from a single observation.
+ *
+ * GitHub sends `crUsed` and `totRem` in the same header, but the two can lag
+ * each other (observed live: `crUsed=1011&ent=5000&totRem=3925.6`, where
+ * 1011 + 3925.6 ≠ 5000). `totRem` moves with every response, so it is the
+ * fresher field: when the reported `used` disagrees with `total - remaining` by
+ * more than rounding, `used` is re-derived from `remaining`. The percentage is
+ * then always computed from the same, reconciled pair — never from a mix of an
+ * older `used` and a newer `remaining`.
+ */
+export function normalizeCreditObservation(quota: JsonRecord & { used: number; total: number }): {
+  used: number;
+  remaining: number;
+  remainingPercentage: number;
+} {
+  const total = quota.total;
+  const reportedUsed = Math.max(0, quota.used);
+  const reportedRemaining =
+    typeof quota.remaining === "number" && Number.isFinite(quota.remaining)
+      ? Math.max(0, quota.remaining)
+      : Math.max(total - reportedUsed, 0);
+  const derivedUsed = Math.max(total - reportedRemaining, 0);
+  const used =
+    Math.abs(reportedUsed - derivedUsed) > 0.5 ? derivedUsed : Math.min(reportedUsed, total);
+  const remaining = Math.max(total - used, 0);
+  return {
+    used,
+    remaining,
+    remainingPercentage: total > 0 ? (remaining / total) * 100 : 0,
+  };
+}
+
+/**
  * Keep cached credit counts when the incoming entry is an all-percentage-only
- * reading. The incoming percentage/reset stay authoritative; only the counts
- * (and the flags that let the display layer render them) are restored.
+ * reading. The reset stays the incoming one (same period, checked above), but
+ * `used`, `remaining` and the percentage are taken together from the cached
+ * observation — a newer incoming percentage next to an older cached `used`
+ * would describe two different moments and break used + remaining = total.
  */
 export function preserveCreditBearingQuotas(
   next: ProviderLimitsCacheEntry,
@@ -96,14 +143,13 @@ export function preserveCreditBearingQuotas(
     const cached = previous.quotas[windowKey];
     if (!hasCreditCounts(cached) || !sameResetPeriod(quota, cached)) continue;
     const { isPercentageOnly: _degraded, ...visible } = quota;
+    const counts = normalizeCreditObservation(cached);
     quotas[windowKey] = {
       ...visible,
-      used: cached.used,
+      used: counts.used,
       total: cached.total,
-      remaining:
-        typeof cached.remaining === "number"
-          ? cached.remaining
-          : Math.max(cached.total - cached.used, 0),
+      remaining: counts.remaining,
+      remainingPercentage: counts.remainingPercentage,
       unlimited: cached.unlimited === true,
       ...(isRecord(cached.overage) ? { overage: cached.overage } : {}),
       quotaSource: typeof cached.quotaSource === "string" ? cached.quotaSource : "responseHeaders",
@@ -140,4 +186,76 @@ export function buildProviderLimitsCacheEntry(
     previous
   );
   return { next, cache };
+}
+
+/**
+ * GHE Copilot (`ghe-copilot`) AI-credit windows are captured passively from
+ * `x-quota-snapshot-*` response headers on the chat path
+ * (`githubQuotaCapture.ts`) and persisted in the Provider Limits cache + quota
+ * snapshots (`githubQuotaSnapshotStore.ts`).
+ *
+ * A snapshot younger than this is authoritative for background syncs — no point
+ * probing the tenant. A user-triggered refresh still probes live (see
+ * `fetchLiveProviderLimitsWithOptions`): the tenant endpoint answers on GHE and
+ * is the only way an empty/older snapshot can move forward.
+ */
+export const GHE_PASSIVE_SNAPSHOT_FRESH_MS = 45 * 60_000;
+
+/**
+ * The passive envelope deliberately carries NO `_stale` marker: `_stale` means
+ * "the live probe failed, this is the last known value", and a passive capture
+ * is a successful read of a different source. `_passive` + `_observedAt` let the
+ * dashboard render a neutral "captured from Copilot responses" hint instead of
+ * the refresh-failed tooltip/health degradation.
+ */
+function copilotPassiveSnapshotUsage(
+  snapshot: NonNullable<ReturnType<typeof readPassiveGitHubQuotaSnapshot>>
+): JsonRecord {
+  return {
+    quotas: snapshot.quotas,
+    message: null,
+    // The observation time is the last chat response that carried the headers,
+    // not "now" — keep it so the UI can say how old the reading is.
+    _passive: true,
+    _passiveReason: PASSIVE_COPILOT_REASON,
+    ...(snapshot.observedAt ? { _observedAt: snapshot.observedAt } : {}),
+  };
+}
+
+/**
+ * Fresh passive Copilot quota as a usage envelope, or null when the connection
+ * has never produced one (or the reading is older than the freshness window).
+ */
+export function resolveCopilotPassiveUsage(
+  provider: string | null | undefined,
+  connectionId: string | null | undefined,
+  nowMs: number = Date.now()
+): JsonRecord | null {
+  if (provider !== "ghe-copilot") return null;
+
+  const snapshot = readPassiveGitHubQuotaSnapshot(connectionId);
+  if (!snapshot || Object.keys(snapshot.quotas).length === 0) return null;
+
+  const observedMs = snapshot.observedAt ? Date.parse(snapshot.observedAt) : Number.NaN;
+  if (!Number.isFinite(observedMs) || nowMs - observedMs >= GHE_PASSIVE_SNAPSHOT_FRESH_MS) {
+    return null;
+  }
+  return copilotPassiveSnapshotUsage(snapshot);
+}
+
+/**
+ * Keep a captured Copilot snapshot as the answer when the live fetch produced no
+ * quota (tenant endpoint missing, expired token, throttled probe).
+ */
+export function withPassiveCopilotQuotaFallback(
+  provider: string | null | undefined,
+  connectionId: string | null | undefined,
+  usage: JsonRecord
+): JsonRecord {
+  if (provider !== "ghe-copilot") return usage;
+  if (isRecord(usage?.quotas) && Object.keys(usage.quotas).length > 0) return usage;
+
+  const snapshot = readPassiveGitHubQuotaSnapshot(connectionId);
+  if (!snapshot) return usage;
+  return { ...usage, ...copilotPassiveSnapshotUsage(snapshot) };
 }

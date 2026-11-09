@@ -48,6 +48,8 @@ interface QuotaCardProps {
           speed?: unknown;
         };
         stale?: { since?: string; reason?: string } | null;
+        /** Set when the numbers were captured from Copilot response headers (not a live probe). */
+        passive?: { observedAt?: string | null } | null;
       }
     | undefined;
   loading: boolean;
@@ -139,7 +141,10 @@ export default function QuotaCard({
 
   const hasOverrides = hasQuotaCutoffOverrides(connection);
   const hasStaleData = !!quota?.stale;
-  const displayRefreshedAt = quota?.stale?.since || refreshedAt;
+  // Passive Copilot captures are healthy reads; they must not degrade the card
+  // or the health overview, only carry a neutral "captured as of" hint.
+  const passiveObservedAt = quota?.stale ? null : (quota?.passive?.observedAt ?? null);
+  const displayRefreshedAt = quota?.stale?.since || passiveObservedAt || refreshedAt;
   const canEditCutoff = computeCanEditCutoff(quotas);
   const canRedeemResetCredit = computeCanRedeemResetCredit(connection.provider, quotas, {
     raw: quota?.raw,
@@ -179,6 +184,7 @@ export default function QuotaCard({
         }
         refreshedAt={displayRefreshedAt}
         hasStaleData={hasStaleData}
+        passiveObservedAt={passiveObservedAt}
         onRefresh={onRefresh}
         onOpenCutoff={onOpenCutoff}
         onOpenCost={() => setCostModalOpen(true)}
