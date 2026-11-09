@@ -34,6 +34,15 @@ export interface QuotaInfo {
   // dashboard still renders used / entitlement / remaining from the Provider
   // Limits entry.
   overagePermitted?: boolean;
+  // Upstream-reported credit counts, for windows that expose them (GitHub
+  // Copilot AI credits). Display-only: routing keeps using
+  // `remainingPercentage`. Kept on the normalized entry so the snapshot writer
+  // can persist a lossless `raw_data` row and the dedup check can tell a count
+  // change from an unchanged percentage.
+  used?: number;
+  total?: number;
+  remaining?: number;
+  overageUsed?: number;
   displayName?: string;
   windowSeconds?: number | null;
   claudeQuota?: ClaudeQuotaMetadata;

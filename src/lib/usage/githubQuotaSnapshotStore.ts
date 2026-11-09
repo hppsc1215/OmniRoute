@@ -11,10 +11,12 @@
  * pipeline (`chatCore/executeProviderRequest.ts`).
  *
  * Two durable sources, in freshness order:
- *   1. the Provider Limits cache row (`source: "passive"`), rewritten at most
- *      once a minute while the account is in use;
+ *   1. the Provider Limits cache row (`source: "passive"`, or any row that still
+ *      carries real credit counts), rewritten at most once a minute while the
+ *      account is in use;
  *   2. the newest `quota_snapshots` row per window, for a connection that has
- *      not been used since the Provider Limits cache was cleared.
+ *      not been used since the Provider Limits cache was cleared. Rows written
+ *      before the credit counts were persisted are percentage-only.
  *
  * @module lib/usage/githubQuotaSnapshotStore
  */
@@ -135,6 +137,22 @@ function readSnapshotRows(connectionId: string): PassiveGitHubQuotaSnapshot | nu
   return { quotas, observedAt, source: "snapshots" };
 }
 
+/** A window that carries real credit counts (not the percentage-only shape). */
+function hasCreditBearingQuota(quotas: Record<string, unknown>): boolean {
+  return Object.values(quotas).some((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const quota = value as Record<string, unknown>;
+    if (quota.isPercentageOnly === true) return false;
+    return (
+      typeof quota.used === "number" &&
+      Number.isFinite(quota.used) &&
+      typeof quota.total === "number" &&
+      Number.isFinite(quota.total) &&
+      quota.total > 0
+    );
+  });
+}
+
 /**
  * Latest passive Copilot quota snapshot for a connection.
  *
@@ -149,16 +167,18 @@ export function readPassiveGitHubQuotaSnapshot(
 
   try {
     const cached = getProviderLimitsCache(connectionId);
-    if (
-      cached?.source === PASSIVE_QUOTA_SOURCE &&
-      cached.quotas &&
-      Object.keys(cached.quotas).length > 0
-    ) {
-      return {
-        quotas: cached.quotas as Record<string, unknown>,
-        observedAt: cached.fetchedAt ?? null,
-        source: "providerLimits",
-      };
+    if (cached?.quotas && Object.keys(cached.quotas).length > 0) {
+      // The `passive` marker is the normal case. A row rewritten by a Provider
+      // Limits sync can still be the only carrier of the credit counts, so
+      // accept it too — otherwise the counts are ignored and the degraded
+      // snapshot rows take over permanently. Percentage-only rows stay rejected.
+      if (cached.source === PASSIVE_QUOTA_SOURCE || hasCreditBearingQuota(cached.quotas)) {
+        return {
+          quotas: cached.quotas as Record<string, unknown>,
+          observedAt: cached.fetchedAt ?? null,
+          source: "providerLimits",
+        };
+      }
     }
   } catch {
     // No DB / build phase — fall through to snapshots.

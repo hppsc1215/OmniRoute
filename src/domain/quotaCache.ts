@@ -128,15 +128,61 @@ function preserveParkDeadline(
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 /**
- * `quota_snapshots.raw_data` carries only the interpretation flags hydration
- * needs — never the provider payload. `fractionReported:false` keeps a placeholder
- * 0% row from hydrating as genuine exhaustion; `overagePermitted:true` keeps a
- * real 0% row exempt after an in-memory cache eviction or restart.
+ * Credit counts a window actually reported. `null` when the window is
+ * percentage-only: no finite entitlement, no finite `used`, or explicitly
+ * unlimited. This is the boundary between the lossless `raw_data` contract and
+ * the legacy boolean-only metadata — a placeholder must never look lossless.
+ */
+type QuotaCreditCounts = {
+  used: number;
+  total: number;
+  remaining: number;
+  overageUsed: number;
+};
+
+function readQuotaCreditCounts(quota: Record<string, unknown>): QuotaCreditCounts | null {
+  if (quota.unlimited === true) return null;
+  const total = safePercentage(quota.total);
+  const used = safePercentage(quota.used);
+  if (total === undefined || total <= 0 || used === undefined || used < 0) return null;
+  const reportedRemaining = safePercentage(quota.remaining);
+  const remaining =
+    reportedRemaining !== undefined && reportedRemaining >= 0
+      ? reportedRemaining
+      : Math.max(total - used, 0);
+  const overage = quota.overage;
+  const overageUsed =
+    overage && typeof overage === "object"
+      ? (safePercentage((overage as Record<string, unknown>).used) ?? 0)
+      : 0;
+  return { used, total, remaining, overageUsed };
+}
+
+/**
+ * `quota_snapshots.raw_data` carries the interpretation flags hydration needs
+ * and — for windows that reported real credit counts — the counts themselves,
+ * in the shape `githubQuotaSnapshotStore.readSnapshotRows` already reads back
+ * (`source:"response_headers"`). Percentage-only windows keep the legacy
+ * boolean-only payload so old hydration behaviour is unchanged.
  */
 function quotaSnapshotMetadata(
   fractionReported: boolean,
-  overagePermitted: boolean
+  overagePermitted: boolean,
+  creditCounts: QuotaCreditCounts | null,
+  remainingPercentage: number
 ): string | null {
+  if (fractionReported && creditCounts) {
+    return JSON.stringify({
+      source: "response_headers",
+      creditsUsed: creditCounts.used,
+      entitlement: creditCounts.total,
+      remaining: creditCounts.remaining,
+      remainingPercentage,
+      unlimited: false,
+      overageUsed: creditCounts.overageUsed,
+      overagePermitted,
+    });
+  }
   const metadata: Record<string, boolean> = {};
   if (!fractionReported) metadata.fractionReported = false;
   if (overagePermitted) metadata.overagePermitted = true;
@@ -251,20 +297,40 @@ function earliestResetAt(quotas: Record<string, QuotaInfo>): string | null {
  */
 export function quotaSnapshotChanged(
   prior:
-    | { quotas?: Record<string, { remainingPercentage: number }>; exhausted?: boolean }
+    | {
+        quotas?: Record<
+          string,
+          { remainingPercentage: number; used?: number; total?: number; remaining?: number }
+        >;
+        exhausted?: boolean;
+      }
     | null
     | undefined,
   windowKey: string,
   remainingPercentage: number,
-  exhausted: boolean
+  exhausted: boolean,
+  creditCounts?: QuotaCreditCounts | null
 ): boolean {
   if (!prior) return true;
   const priorWindow = prior.quotas?.[windowKey];
   if (!priorWindow) return true;
-  return (
+  if (
     priorWindow.remainingPercentage !== remainingPercentage ||
     (prior.exhausted ?? false) !== exhausted
-  );
+  ) {
+    return true;
+  }
+  // A count change can leave the reported percentage untouched (the Copilot
+  // header carries one decimal), and a count-bearing window must heal a prior
+  // percentage-only row even when the bar did not move — persist either way.
+  if (creditCounts) {
+    return (
+      priorWindow.used !== creditCounts.used ||
+      priorWindow.total !== creditCounts.total ||
+      priorWindow.remaining !== creditCounts.remaining
+    );
+  }
+  return false;
 }
 
 /**
@@ -305,6 +371,7 @@ function normalizeQuotas(rawQuotas: Record<string, unknown>): Record<string, Quo
         quota.fractionReported !== false &&
         quota.unlimited !== true &&
         (percentage !== undefined || boundedPercentage !== undefined);
+      const creditCounts = fractionReported ? readQuotaCreditCounts(quota) : null;
       result[key] = {
         // #10095 — thread through the "did upstream actually report this
         // window's fraction" signal (see UsageQuota in usage/quota.ts).
@@ -312,6 +379,14 @@ function normalizeQuotas(rawQuotas: Record<string, unknown>): Record<string, Quo
         resetAt: typeof quota.resetAt === "string" ? quota.resetAt : null,
         fractionReported: fractionReported ? undefined : false,
         ...(overagePermitted ? { overagePermitted: true } : {}),
+        ...(creditCounts
+          ? {
+              used: creditCounts.used,
+              total: creditCounts.total,
+              remaining: creditCounts.remaining,
+              ...(creditCounts.overageUsed > 0 ? { overageUsed: creditCounts.overageUsed } : {}),
+            }
+          : {}),
         ...(typeof quota.displayName === "string" && quota.displayName.trim()
           ? { displayName: quota.displayName.trim() }
           : {}),
@@ -854,9 +929,21 @@ export function setQuotaCache(
       // (`entry.exhausted`). A connection with one 0% window and other non-zero
       // windows previously never flagged that window's row as exhausted.
       const windowExhausted = fractionReported && !overagePermitted && remainingPercentage <= 0;
+      // Real credit counts (GitHub Copilot AI credits) also ride in `raw_data`,
+      // so a lossless row can be rebuilt without this cache's Provider Limits
+      // entry. Percentage-only windows keep the legacy metadata.
+      const creditCounts = fractionReported
+        ? readQuotaCreditCounts(quotaInfo as Record<string, unknown>)
+        : null;
       // #4438 — only persist on the first observation or a real change.
       if (
-        !quotaSnapshotChanged(prior, windowKey, remainingPercentage, windowExhausted) &&
+        !quotaSnapshotChanged(
+          prior,
+          windowKey,
+          remainingPercentage,
+          windowExhausted,
+          creditCounts
+        ) &&
         prior?.quotas?.[windowKey]?.fractionReported === normalized.fractionReported &&
         prior?.quotas?.[windowKey]?.overagePermitted === normalized.overagePermitted
       )
@@ -870,8 +957,14 @@ export function setQuotaCache(
           is_exhausted: windowExhausted ? 1 : 0,
           next_reset_at: normalized.resetAt,
           window_duration_ms: entry.windowDurationMs ?? null,
-          // Persist only the interpretation, never the raw provider payload.
-          raw_data: quotaSnapshotMetadata(fractionReported, overagePermitted),
+          // Persist the interpretation flags plus any real credit counts —
+          // never the raw provider payload.
+          raw_data: quotaSnapshotMetadata(
+            fractionReported,
+            overagePermitted,
+            creditCounts,
+            remainingPercentage
+          ),
         });
       } catch (error) {
         console.error("[quotaCache] Failed to save snapshot:", error);

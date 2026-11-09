@@ -3,10 +3,11 @@
  *
  * Persistence mapping of the passive Copilot quota capture. The capture writes
  * through the mechanisms the active fetchers already use — quota cache (routing)
- * + the `quota_snapshots` row it owns (history, percentage-only), and the
- * Provider Limits cache (the dashboard row, and the only durable carrier of the
- * credit counts). `ghe-copilot` has no quota endpoint to poll, so whatever a
- * response header said is the only accounting the tenant will ever get.
+ * + the `quota_snapshots` row it owns (history, with the credit counts when the
+ * window reports them), and the Provider Limits cache (the dashboard row and
+ * the primary carrier of the credit counts). `ghe-copilot` has no quota
+ * endpoint to poll, so whatever a response header said is the only accounting
+ * the tenant will ever get.
  *
  * Throttling is part of the contract: the capture runs on every chat request.
  */
@@ -388,11 +389,14 @@ test("falls back to quota_snapshots when the dashboard cache was cleared", () =>
   assert.ok(snapshot);
   assert.equal(snapshot.source, "snapshots");
   const quotas = snapshot.quotas as Record<string, QuotaLike>;
-  // The snapshot row is percentage-only; the bar survives a restart, the credit
-  // counts do not — that is why the Provider Limits row is the primary source.
+  // The snapshot row now persists the credit counts too, so clearing the
+  // Provider Limits row no longer degrades the reading to a bare percentage.
   assert.equal(quotas.premium_interactions.remainingPercentage, 80.25);
   assert.equal(quotas.premium_interactions.resetAt, "2026-12-01T00:00:00.000Z");
-  assert.equal(quotas.premium_interactions.isPercentageOnly, true);
+  assert.equal(quotas.premium_interactions.used, 988);
+  assert.equal(quotas.premium_interactions.total, 5000);
+  assert.equal(quotas.premium_interactions.remaining, 4012.5);
+  assert.equal(quotas.premium_interactions.isPercentageOnly, undefined);
 });
 
 test("never reads a snapshot for an unknown connection", () => {

@@ -14,11 +14,11 @@
  * table, no migration:
  *
  *   - `setQuotaCache`          → in-memory routing quota + the `quota_snapshots`
- *                               row it already writes (percentage + reset)
+ *                               row it already writes (percentage, reset, and
+ *                               the credit counts when the window reports them)
  *   - `setProviderLimitsCache` → the row Usage > Provider Limits renders, and the
- *                               only durable place that carries the credit counts
- *                               (used / entitlement / overage) — the snapshot row
- *                               is percentage-only by design
+ *                               primary durable carrier of the credit counts
+ *                               (used / entitlement / overage)
  *
  * Both writes are throttled per connection, because the chat hot path calls this
  * on every request: the routing cache is rewritten only when a window's remaining

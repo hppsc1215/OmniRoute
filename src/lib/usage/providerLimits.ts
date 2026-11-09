@@ -29,7 +29,10 @@ import {
 } from "@omniroute/open-sse/services/usage/claudeQuota.ts";
 import { getMachineId } from "@/shared/utils/machine";
 import { supportsProviderQuota } from "@/shared/utils/providerQuotaVisibility";
-import { mergeProviderLimitsCacheEntry, toProviderLimitsCacheEntry } from "./providerLimitsCache";
+import {
+  buildProviderLimitsCacheEntry,
+  PASSIVE_COPILOT_STALE_REASON,
+} from "./providerLimitsQuotaMerge";
 import { readPassiveGitHubQuotaSnapshot } from "./githubQuotaSnapshotStore";
 import { getCredentialRefreshExecutor } from "@omniroute/open-sse/executors/credential.ts";
 import { getUsageForProvider } from "@omniroute/open-sse/services/usage.ts";
@@ -241,7 +244,7 @@ function copilotPassiveSnapshotUsage(
     // not "now" — keep it so the UI can say how old the reading is.
     _stale: true,
     ...(snapshot.observedAt ? { _staleSince: snapshot.observedAt } : {}),
-    _staleReason: "Captured from GitHub Copilot response headers.",
+    _staleReason: PASSIVE_COPILOT_STALE_REASON,
   };
 }
 
@@ -1282,9 +1285,13 @@ export async function fetchAndPersistProviderLimits(
     allowRotatingRefresh: opts.allowRotatingRefresh,
     includeResetCredits: opts.includeResetCredits,
   });
-  const newCache = toProviderLimitsCacheEntry(usage, source);
   const previous = getProviderLimitsCache(connectionId);
-  const cache = mergeProviderLimitsCacheEntry(connection.provider, newCache, previous);
+  const { next: newCache, cache } = buildProviderLimitsCacheEntry(
+    connection.provider,
+    usage,
+    source,
+    previous
+  );
 
   // Don't persist error-only entries (429 etc.) — would wipe prior good cache.
   // Serve the prior entry instead; only successful fetches update the cache.
@@ -1375,8 +1382,12 @@ export async function syncAllProviderLimits(
     const { usage } = await fetchLiveProviderLimitsWithOptions(connection.id, {
       forceRefresh,
     });
-    const nextCache = toProviderLimitsCacheEntry(usage, source);
-    const cache = mergeProviderLimitsCacheEntry(connection.provider, nextCache, existingCache);
+    const { cache } = buildProviderLimitsCacheEntry(
+      connection.provider,
+      usage,
+      source,
+      existingCache
+    );
     return { connectionId: connection.id, cache };
   };
 
