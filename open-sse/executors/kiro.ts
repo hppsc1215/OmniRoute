@@ -26,6 +26,7 @@ import {
   kiroRuntimeHost,
   resolveKiroRuntimeRegion,
 } from "../services/kiroRegion.ts";
+import { buildKiroFingerprint } from "../services/kiroUserAgent.ts";
 import {
   KIRO_TOOL_CALL_WRAPPER,
   appendBufferedKiroToolInput,
@@ -346,6 +347,18 @@ export class KiroExecutor extends BaseExecutor {
       "x-amzn-bedrock-cache-control": "enable",
       "anthropic-beta": "prompt-caching-2024-07-31",
     };
+
+    // Kiro retires client builds on a schedule and answers every build below the
+    // current floor with 403 FEATURE_NOT_SUPPORTED ("This version of Kiro is no
+    // longer supported"), keyed on the `KiroIDE-<version>-<machineId>` token in
+    // `User-Agent`. The static provider profile string carries no parsable
+    // version, so fingerprint each request from the connection instead.
+    const fingerprint = buildKiroFingerprint(
+      credentials.providerSpecificData,
+      credentials.accessToken || credentials.apiKey || ""
+    );
+    headers["User-Agent"] = fingerprint.userAgent;
+    headers["X-Amz-User-Agent"] = fingerprint.amzUserAgent;
 
     const authMethod =
       typeof credentials.providerSpecificData?.authMethod === "string"

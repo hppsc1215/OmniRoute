@@ -1,4 +1,5 @@
 import { getAntigravityContentHeaders } from "../services/antigravityHeaders.ts";
+import { KIRO_IDE_VERSION } from "../services/kiroUserAgent.ts";
 import type { AntigravityClientProfile } from "@/shared/constants/antigravityClientProfile";
 
 // GitHub Copilot request identity. Ported to match the GitHub Copilot CLI
@@ -404,8 +405,10 @@ export function resetCodeBuddyCnVersionCache(): void {
   codeBuddyVersionInFlight = null;
 }
 
-export const KIRO_SDK_USER_AGENT = "AWS-SDK-JS/3.0.0 kiro-ide/1.0.0";
-export const KIRO_AMZ_USER_AGENT = "aws-sdk-js/3.0.0 kiro-ide/1.0.0";
+export const KIRO_SDK_USER_AGENT =
+  "aws-sdk-js/1.0.0 ua/2.1 os/windows#10.0.26200 lang/js md/nodejs#22.21.1 " +
+  `api/codewhispererruntime#1.0.0 m/N,E KiroIDE-${KIRO_IDE_VERSION}`;
+export const KIRO_AMZ_USER_AGENT = `aws-sdk-js/1.0.0 KiroIDE-${KIRO_IDE_VERSION}`;
 export const KIRO_STREAMING_TARGET =
   "AmazonCodeWhispererStreamingService.GenerateAssistantResponse";
 
