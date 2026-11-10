@@ -252,6 +252,8 @@ import {
 import {
   shouldPreserveCacheControl,
   resolveConnectionCacheOverride,
+  requestCarriesCacheControl,
+  targetAcceptsClientCacheMarkers,
 } from "../utils/cacheControlPolicy.ts";
 import { getCachedSettings } from "@/lib/db/readCache";
 import { resolveToolDisclosureConfig } from "../utils/toolDisclosure.ts";
@@ -2088,7 +2090,7 @@ async function handleChatCoreInner({
   // Fetch settings from DB to get user preference
   const cacheControlMode = await getCacheControlSettings().catch(() => "auto" as const);
   const connectionCacheOverride = resolveConnectionCacheOverride(credentials?.providerSpecificData);
-  const preserveCacheControl = shouldPreserveCacheControl({
+  let preserveCacheControl = shouldPreserveCacheControl({
     userAgent,
     isCombo,
     comboStrategy,
@@ -2098,6 +2100,35 @@ async function handleChatCoreInner({
     settings: { alwaysPreserveClientCache: cacheControlMode },
     connectionCacheOverride,
   });
+
+  // OpenAI-shape clients (ai-sdk based, e.g. opencode) attach Anthropic-style
+  // `cache_control` to content parts even though OpenAI format does not define
+  // the field. `shouldPreserveCacheControl()` keys on the user agent, so those
+  // markers were rewritten/discarded for every non-Claude-Code client. In OpenAI
+  // format the field's presence IS the opt-in (same rationale as
+  // providerAcceptsPromptCacheBreakpoint), so keep it when the target really
+  // caches — unless the operator pinned the setting to "never".
+  //
+  // The gate is the transport that will receive the markers, not the provider's
+  // generic caching capability: on a Claude-format leg only an Anthropic-native
+  // endpoint accepts `cache_control` block fields (see targetAcceptsClientCacheMarkers).
+  if (
+    !preserveCacheControl &&
+    cacheControlMode !== "never" &&
+    requestCarriesCacheControl(translatedBody) &&
+    targetAcceptsClientCacheMarkers({
+      provider,
+      targetFormat,
+      model: effectiveModel,
+      connectionCacheOverride,
+    })
+  ) {
+    preserveCacheControl = true;
+    log?.debug?.(
+      "CACHE",
+      `Preserving client cache_control supplied in ${sourceFormat} shape (provider=${provider})`
+    );
+  }
 
   if (preserveCacheControl) {
     log?.debug?.(

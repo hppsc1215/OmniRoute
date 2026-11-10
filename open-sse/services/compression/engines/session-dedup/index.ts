@@ -24,6 +24,10 @@
  *   - First occurrence is ALWAYS kept intact; only later identical occurrences are replaced.
  *   - Never rewrite the current turn (messages after the last assistant message): the
  *     model must see what it just read or was just sent. It is deduped on a later turn.
+ *   - Prompt-cache targets (and the explicit `freezeSentHistory` opt-in): the engine is
+ *     a NO-OP. Anthropic-style prefix caching is byte-exact, and no per-message rewrite
+ *     rule here can be both position-stable and usable — see the comment in `apply()`.
+ *     Non-caching targets keep the legacy history-rewrite behaviour unchanged.
  *
  * Reconstruction:
  *   Replace every `[dedup:ref sha=XXXXXXXX]` marker with the original block text
@@ -32,6 +36,7 @@
 
 import crypto from "node:crypto";
 import { createCompressionStats } from "../../stats.ts";
+import { targetReceivesClaudeCacheBreakpoints } from "../../../../utils/cacheControlPolicy.ts";
 import { runFuzzyPass } from "./fuzzy.ts";
 import { callerSupportsCcrRetrieve } from "../ccr/protocolInstruction.ts";
 import type {
@@ -200,7 +205,8 @@ function dedupeWithinMessage(
 function dedupMessageTexts(
   msgTexts: Array<{ msgIdx: number; messageIndex: number; text: string }>,
   minBlockChars: number,
-  currentTurnStart: number
+  /** Messages at or after this index are never rewritten (the live turn). */
+  protectFromIndex: number
 ): {
   deduped: Map<number, string>;
   dedupCount: number;
@@ -211,7 +217,7 @@ function dedupMessageTexts(
   // Single-message case: apply intra-message dedup.
   if (msgTexts.length === 1) {
     const { text, msgIdx, messageIndex } = msgTexts[0];
-    if (messageIndex >= currentTurnStart) {
+    if (messageIndex >= protectFromIndex) {
       return { deduped, dedupCount };
     }
     const { deduped: dedupedText, changed } = dedupeWithinMessage(text, minBlockChars);
@@ -242,7 +248,7 @@ function dedupMessageTexts(
   // The current turn is never rewritten: a re-read tool result replaced by a marker
   // reads to the model as a lost read, and it reads the file again another way.
   for (const { msgIdx, messageIndex, text } of msgTexts) {
-    if (messageIndex >= currentTurnStart) continue;
+    if (messageIndex >= protectFromIndex) continue;
     const lines = text.split("\n");
     const blocks = findSuffixBlocks(lines, minBlockChars);
 
@@ -529,6 +535,45 @@ export const sessionDedupEngine: CompressionEngine = {
 
     const messages = body["messages"];
     if (!Array.isArray(messages) || messages.length === 0) {
+      return { body, compressed: false, stats: null };
+    }
+
+    // Prompt-cache targets: emit the body unchanged.
+    //
+    // A cache hit needs every message of request N to be byte-identical to the same
+    // message of request N+1 (Anthropic hashes the exact serialized prefix). A rewrite
+    // is cache-safe only when the emitted form of message i is a pure function of
+    // messages 0..i — and this engine has no such rule that is also usable:
+    //
+    //   - rewriting only already-sent history (the legacy rule) flips a message from
+    //     the original text (turn N, when it was still the live turn and thus protected)
+    //     to `[dedup:ref …]` (turn N+1): bytes change retroactively.
+    //   - rewriting only the live turn (the previous `freezeSentHistory` rule) flips it
+    //     the other way round: `[dedup:ref …]` in turn N, original text in turn N+1.
+    //     It is also self-defeating: a message is protected while it is live and frozen
+    //     afterwards, so no message is ever eligible — except the live turn, which is
+    //     the one rewrite that is guaranteed to change bytes next turn.
+    //   - rewriting every duplicate regardless of position IS position-stable, but it
+    //     hides the tool result the model just asked for behind a marker that nothing
+    //     resolves (`__sessionDedupMap__` is documented but never attached): the model
+    //     re-reads the file, and that re-read is deduped again — forever.
+    //
+    // The economics agree: a cache read bills at a fraction of the input price, while a
+    // broken prefix re-bills every token from the rewritten message onwards at the
+    // cache-write price — so the tokens one marker saves can only be collected by
+    // rewriting a message the upstream already cached. Caching targets therefore get no
+    // rewrite at all; non-caching targets keep the legacy behaviour (history rewritten,
+    // live turn protected).
+    // `freezeSentHistory` is the legacy config spelling of the same guarantee; keep
+    // accepting it so an explicit opt-in does not silently start rewriting again.
+    // The target gate is `targetReceivesClaudeCacheBreakpoints()` — exactly the targets
+    // where this branch emits Anthropic cache_control breakpoints — NOT the broader
+    // `providerSupportsCaching()`: antigravity/gemini, codex, kimi-coding and openai have no
+    // breakpoint layout to lose, and their dedup savings are load-bearing.
+    const preservePrefix =
+      stepConfig["freezeSentHistory"] === true ||
+      targetReceivesClaudeCacheBreakpoints(options?.provider, options?.targetFormat);
+    if (preservePrefix) {
       return { body, compressed: false, stats: null };
     }
 

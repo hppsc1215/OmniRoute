@@ -25,9 +25,13 @@ export function toProviderLimitsCacheEntry(
   source: string,
   // A fetcher that serves its last known quota (e.g. Claude during a 429 cooldown) flags it
   // `_stale` with the original read time — keep that time instead of stamping it as fresh.
+  // The passive Copilot envelope is not stale, but its `_observedAt` is equally the time the
+  // numbers were actually read, so it must win over "now" as well.
   fetchedAt = usage._stale === true && typeof usage._staleSince === "string"
     ? usage._staleSince
-    : new Date().toISOString()
+    : usage._passive === true && typeof usage._observedAt === "string"
+      ? usage._observedAt
+      : new Date().toISOString()
 ): ProviderLimitsCacheEntry {
   const bankedResetCredits = Number(usage.bankedResetCredits);
   return {

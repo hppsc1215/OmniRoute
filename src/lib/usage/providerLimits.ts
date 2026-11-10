@@ -29,7 +29,19 @@ import {
 } from "@omniroute/open-sse/services/usage/claudeQuota.ts";
 import { getMachineId } from "@/shared/utils/machine";
 import { supportsProviderQuota } from "@/shared/utils/providerQuotaVisibility";
-import { mergeProviderLimitsCacheEntry, toProviderLimitsCacheEntry } from "./providerLimitsCache";
+import {
+  buildProviderLimitsCacheEntry,
+  resolveCopilotPassiveUsage,
+  withPassiveCopilotQuotaFallback,
+} from "./providerLimitsQuotaMerge";
+
+// The passive-Copilot read policy lives in the leaf merge module; it is
+// re-exported here because this module is the public surface callers/tests use.
+export {
+  GHE_PASSIVE_SNAPSHOT_FRESH_MS,
+  resolveCopilotPassiveUsage,
+  withPassiveCopilotQuotaFallback,
+} from "./providerLimitsQuotaMerge";
 import { getCredentialRefreshExecutor } from "@omniroute/open-sse/executors/credential.ts";
 import { getUsageForProvider } from "@omniroute/open-sse/services/usage.ts";
 import {
@@ -1056,6 +1068,28 @@ async function fetchLiveProviderLimitsWithOptions(
         await syncToCloudIfEnabled();
       }
 
+      // GHE Copilot (#ghe-copilot-quota): the AI-credit windows are captured
+      // passively from the connection's own response headers. Background syncs
+      // serve that snapshot while it is fresh — there is nothing to poll. A
+      // user-triggered refresh (`forceRefresh`, set by the /api/usage route via
+      // source="manual") must not short-circuit here: the tenant DOES expose
+      // /api/v3/copilot_internal/user (verified live), and only a real probe can
+      // move an empty or older snapshot forward. The passive snapshot stays the
+      // fallback through `withPassiveCopilotQuotaFallback` below.
+      const passiveCopilotUsage = options.forceRefresh
+        ? null
+        : resolveCopilotPassiveUsage(conn.provider, conn.id);
+      if (passiveCopilotUsage) {
+        connection = conn;
+        return {
+          usage: sanitizeUsageQuotasForProvider(
+            conn.provider,
+            passiveCopilotUsage,
+            await refreshLiveModelIds(conn.provider)
+          ),
+        };
+      }
+
       let usageData = sanitizeUsageQuotasForProvider(
         conn.provider,
         (await getUsageForProvider(conn as unknown as JsonRecord, options)) as JsonRecord,
@@ -1158,6 +1192,12 @@ async function fetchLiveProviderLimitsWithOptions(
     );
     if (data) connection = { ...connection, providerSpecificData: data };
   }
+
+  // GHE Copilot: when the tenant offers no usable quota endpoint, keep serving
+  // the last passively captured AI-credit snapshot instead of showing nothing.
+  result = {
+    usage: withPassiveCopilotQuotaFallback(connection.provider, connection.id, result.usage),
+  };
   if (isRecord(result.usage.quotas)) {
     setQuotaCache(
       connectionId,
@@ -1197,9 +1237,13 @@ export async function fetchAndPersistProviderLimits(
     allowRotatingRefresh: opts.allowRotatingRefresh,
     includeResetCredits: opts.includeResetCredits,
   });
-  const newCache = toProviderLimitsCacheEntry(usage, source);
   const previous = getProviderLimitsCache(connectionId);
-  const cache = mergeProviderLimitsCacheEntry(connection.provider, newCache, previous);
+  const { next: newCache, cache } = buildProviderLimitsCacheEntry(
+    connection.provider,
+    usage,
+    source,
+    previous
+  );
 
   // Don't persist error-only entries (429 etc.) — would wipe prior good cache.
   // Serve the prior entry instead; only successful fetches update the cache.
@@ -1290,8 +1334,12 @@ export async function syncAllProviderLimits(
     const { usage } = await fetchLiveProviderLimitsWithOptions(connection.id, {
       forceRefresh,
     });
-    const nextCache = toProviderLimitsCacheEntry(usage, source);
-    const cache = mergeProviderLimitsCacheEntry(connection.provider, nextCache, existingCache);
+    const { cache } = buildProviderLimitsCacheEntry(
+      connection.provider,
+      usage,
+      source,
+      existingCache
+    );
     return { connectionId: connection.id, cache };
   };
 

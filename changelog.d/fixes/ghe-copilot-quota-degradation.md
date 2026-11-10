@@ -1,0 +1,1 @@
+- **fix(usage):** keep GitHub Copilot AI-credit counts in Usage > Provider Limits — persist `used`/`entitlement`/`remaining` in `quota_snapshots.raw_data`, stop Provider Limits syncs from overwriting the passive marker or a credit-bearing entry with a percentage-only one, and trust any cached row that still carries real counts.

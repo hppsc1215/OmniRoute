@@ -150,6 +150,8 @@ interface Props {
   paidCredits?: CodexPaidCredits;
   refreshedAt?: string;
   hasStaleData: boolean;
+  /** When set, the numbers came from a passive Copilot capture at this time. */
+  passiveObservedAt?: string | null;
   onRefresh: () => void;
   onOpenCutoff: () => void;
   onOpenCost: () => void;
@@ -272,6 +274,12 @@ function QuotaDetailRow({
   const usedNum = Number(q.used || 0);
   const totalNum = Number(q.total || 0);
   const showUsage = shouldShowQuotaUsageCount(q);
+  // `ovPerm` alone only says overage is *allowed*; the badge marks a row that is
+  // actually drawing on it (credits consumed past the entitlement, or overage
+  // already billed).
+  const overageActive =
+    Number(q.overage?.used || 0) > 0 ||
+    (q.overage?.permitted === true && totalNum > 0 && usedNum >= totalNum);
 
   return (
     <div className="flex flex-col gap-1 py-1" title={q.modelKey || q.name}>
@@ -301,12 +309,24 @@ function QuotaDetailRow({
       </div>
       {!q.unlimited && <QuotaMiniBar percent={pct} size="sm" />}
       <div className="flex items-center justify-between gap-2 text-[10px] text-text-muted tabular-nums">
-        <span>
+        <span className="flex items-center gap-1">
           {showUsage && (
             <>
               {usedNum.toLocaleString()} / {totalNum.toLocaleString()}
             </>
           )}
+          {overageActive ? (
+            <span
+              className="rounded-sm border border-warning/30 bg-warning-bg px-1 text-[9px] uppercase tracking-wide text-warning"
+              title={translateUsageOrFallback(
+                t,
+                "overageAllowedHint",
+                "Included AI credits are used up; requests continue on paid overage."
+              )}
+            >
+              {translateUsageOrFallback(t, "overageAllowed", "overage")}
+            </span>
+          ) : null}
         </span>
         {q.staleAfterReset ? (
           <span title={t("refreshing")}>⟳</span>
@@ -331,6 +351,7 @@ export default function QuotaCardExpanded({
   paidCredits,
   refreshedAt,
   hasStaleData,
+  passiveObservedAt,
   onRefresh,
   onOpenCutoff,
   onOpenCost,
@@ -478,19 +499,32 @@ export default function QuotaCardExpanded({
 
       <div className="min-w-0 space-y-1.5 pt-1.5 border-t border-border/40">
         <div className="flex min-w-0 items-center justify-between gap-2">
-          {refreshedLabel && (
+          {passiveObservedAt && refreshedLabel ? (
             <span
-              className={`text-[10px] tabular-nums ${
-                hasStaleData ? "text-warning" : "text-text-muted"
-              }`}
-              title={
-                hasStaleData
-                  ? t("staleQuotaTooltip")
-                  : `${tr("lastRefreshed", "Last refreshed")}: ${refreshedLabel}`
-              }
+              className="text-[10px] tabular-nums text-text-muted"
+              title={tr(
+                "passiveQuotaTooltip",
+                "Captured from Copilot response headers on your last request — not a failed refresh."
+              )}
             >
-              {tr("updatedShort", "Updated")} {refreshedLabel}
+              {tr("passiveQuotaHint", "Captured from Copilot responses")} ·{" "}
+              {tr("passiveQuotaAsOf", "as of {time}", { time: refreshedLabel })}
             </span>
+          ) : (
+            refreshedLabel && (
+              <span
+                className={`text-[10px] tabular-nums ${
+                  hasStaleData ? "text-warning" : "text-text-muted"
+                }`}
+                title={
+                  hasStaleData
+                    ? t("staleQuotaTooltip")
+                    : `${tr("lastRefreshed", "Last refreshed")}: ${refreshedLabel}`
+                }
+              >
+                {tr("updatedShort", "Updated")} {refreshedLabel}
+              </span>
+            )
           )}
           <Button
             variant="outline"

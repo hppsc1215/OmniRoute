@@ -187,6 +187,134 @@ export function providerHonorsOpenAIFormatCacheControl(
 }
 
 /**
+ * Providers whose Claude-format leg is an Anthropic Messages endpoint (native
+ * Anthropic, or an Anthropic-native shim such as Copilot's `/v1/messages`
+ * passthrough) that accepts `cache_control` breakpoints and reports
+ * `cache_read_input_tokens` / `cache_creation_input_tokens`.
+ *
+ * `providerSupportsCaching()` is deliberately broader than this: it also covers
+ * Claude-SHAPE providers (kimi-coding, glm, zai, …) that speak the Messages
+ * wire format without an Anthropic prompt cache. Those shims are strict about
+ * unknown block fields, so OmniRoute must not inject breakpoints there — this
+ * set is the "safe to place breakpoints" subset.
+ */
+const CLAUDE_CACHE_BREAKPOINT_PROVIDERS = new Set([
+  "claude",
+  "anthropic",
+  // GitHub Copilot / GHE Copilot: Claude models are dispatched to the
+  // Anthropic-native /v1/messages shim (executors/github.ts buildUrl), which
+  // does honor and report prompt caching.
+  "github",
+  "gh",
+  "ghe-copilot",
+]);
+
+/**
+ * Whether OmniRoute may place `cache_control` breakpoints on a Claude-format
+ * request for this provider. A per-connection override wins in both
+ * directions so operators can opt a custom connection in (or out).
+ */
+export function providerAcceptsClaudeCacheBreakpoints(
+  provider: string | null | undefined,
+  connectionCacheOverride?: ConnectionCacheOverride | null
+): boolean {
+  if (connectionCacheOverride?.supportsPromptCaching === true) return true;
+  if (connectionCacheOverride?.supportsPromptCaching === false) return false;
+  if (connectionCacheOverride?.cacheControlPassthrough === "claude-format") return true;
+  if (!provider) return false;
+  const providerId = provider.toLowerCase();
+  if (providerId === "vertex" || providerId === "vertex-partner") return true;
+  if (providerId.startsWith("anthropic-compatible-")) return true;
+  return CLAUDE_CACHE_BREAKPOINT_PROVIDERS.has(providerId);
+}
+
+/**
+ * Exact set of request targets on which OmniRoute emits Anthropic `cache_control`
+ * breakpoints: a Claude-format leg served by an Anthropic-native Messages endpoint
+ * (native Anthropic, Vertex's Claude path, `anthropic-compatible-*`, and Copilot's
+ * `/v1/messages` shim). This is the provider half of `providerAcceptsClaudeCacheBreakpoints()`
+ * plus the wire-format half; `prepareClaudeRequest()` and the rolling layout in
+ * `claudeCacheBreakpoints.ts` place markers for exactly these targets.
+ *
+ * Deliberately NARROWER than `providerSupportsCaching()`, which also covers automatic
+ * prefix caches (OpenAI/Codex), Gemini-via-Antigravity and Claude-shape shims that reject
+ * unknown block fields. Only a target that actually receives breakpoints can lose a cache
+ * to a prompt rewrite, so compression engines gate their cache-frozen path on this
+ * predicate: antigravity/gemini, codex, kimi-coding and openai keep the legacy lite
+ * truncation and session-dedup rewriting byte-identically (their token savings are
+ * load-bearing), while ghe-copilot/claude, github, claude and vertex get byte-stable bodies.
+ */
+export function targetReceivesClaudeCacheBreakpoints(
+  provider: string | null | undefined,
+  targetFormat?: string | null,
+  connectionCacheOverride?: ConnectionCacheOverride | null
+): boolean {
+  return (
+    typeof targetFormat === "string" &&
+    targetFormat.toLowerCase() === "claude" &&
+    providerAcceptsClaudeCacheBreakpoints(provider, connectionCacheOverride)
+  );
+}
+
+/**
+ * Whether client-supplied `cache_control` markers can be forwarded to the routed
+ * transport at all. This is about the WIRE SHAPE, not about the provider's
+ * caching capability: a Claude-format leg only accepts `cache_control` block
+ * fields on an Anthropic-native endpoint, while Claude-SHAPE shims (kimi, glm,
+ * zai, …) speak the Messages format without an Anthropic cache and are strict
+ * about unknown block fields. OpenAI-format legs are gated separately
+ * (`providerHonorsOpenAIFormatCacheControl`).
+ */
+export function targetAcceptsClientCacheMarkers({
+  provider,
+  targetFormat,
+  model,
+  connectionCacheOverride,
+}: {
+  provider: string | null | undefined;
+  targetFormat?: string | null;
+  model?: string | null;
+  connectionCacheOverride?: ConnectionCacheOverride | null;
+}): boolean {
+  if (targetFormat?.toLowerCase() === "claude") {
+    return providerAcceptsClaudeCacheBreakpoints(provider, connectionCacheOverride);
+  }
+  return providerSupportsCaching(provider, targetFormat, connectionCacheOverride, model);
+}
+
+/**
+ * Whether a (client-shaped) request body already carries `cache_control`
+ * markers anywhere OmniRoute would forward them: `system` blocks,
+ * `messages[].content[]` blocks, `messages[].cache_control`, or tool
+ * definitions. Clients in OpenAI format (ai-sdk based, e.g. opencode) attach
+ * markers to content parts; OpenAI-shape does not define the field, so its
+ * presence is an explicit opt-in and must survive translation.
+ */
+export function requestCarriesCacheControl(body: unknown): boolean {
+  if (!body || typeof body !== "object") return false;
+  const record = body as Record<string, unknown>;
+  const blocksCarry = (blocks: unknown): boolean =>
+    Array.isArray(blocks) &&
+    blocks.some(
+      (block) =>
+        block !== null &&
+        typeof block === "object" &&
+        (block as Record<string, unknown>).cache_control !== undefined &&
+        (block as Record<string, unknown>).cache_control !== null
+    );
+  if (blocksCarry(record.system)) return true;
+  if (blocksCarry(record.tools)) return true;
+  const messages = record.messages;
+  if (!Array.isArray(messages)) return false;
+  return messages.some((message) => {
+    if (!message || typeof message !== "object") return false;
+    const msg = message as Record<string, unknown>;
+    if (msg.cache_control !== undefined && msg.cache_control !== null) return true;
+    return blocksCarry(msg.content);
+  });
+}
+
+/**
  * Providers that accept OpenAI's explicit prompt-caching field
  * `prompt_cache_breakpoint` on content parts (GPT-5.6+ explicit mode). Kept
  * separate from OPENAI_FORMAT_CACHE_CONTROL_PROVIDERS: that set is about

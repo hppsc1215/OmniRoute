@@ -34,9 +34,19 @@ export type UsageQuota = {
    */
   fractionReported?: boolean;
   quotaSource?:
-    "retrieveUserQuota" | "retrieveUserQuotaSummary" | "fetchAvailableModels" | "localUsageHistory";
+    | "retrieveUserQuota"
+    | "retrieveUserQuotaSummary"
+    | "fetchAvailableModels"
+    | "localUsageHistory"
+    /** Passive capture from provider response headers (GitHub Copilot quota snapshots). */
+    | "responseHeaders";
   displayName?: string;
   isPercentageOnly?: boolean;
+  /**
+   * Copilot AI-credit overage already consumed beyond the plan entitlement, and
+   * whether the account is allowed to overrun at all (`ov` / `ovPerm` headers).
+   */
+  overage?: { used: number; permitted: boolean };
   details?: Array<{
     name: string;
     used: number;

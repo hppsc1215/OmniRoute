@@ -127,11 +127,77 @@ function preserveParkDeadline(
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
+/**
+ * Credit counts a window actually reported. `null` when the window is
+ * percentage-only: no finite entitlement, no finite `used`, or explicitly
+ * unlimited. This is the boundary between the lossless `raw_data` contract and
+ * the legacy boolean-only metadata — a placeholder must never look lossless.
+ */
+type QuotaCreditCounts = {
+  used: number;
+  total: number;
+  remaining: number;
+  overageUsed: number;
+};
+
+function readQuotaCreditCounts(quota: Record<string, unknown>): QuotaCreditCounts | null {
+  if (quota.unlimited === true) return null;
+  const total = safePercentage(quota.total);
+  const used = safePercentage(quota.used);
+  if (total === undefined || total <= 0 || used === undefined || used < 0) return null;
+  const reportedRemaining = safePercentage(quota.remaining);
+  const remaining =
+    reportedRemaining !== undefined && reportedRemaining >= 0
+      ? reportedRemaining
+      : Math.max(total - used, 0);
+  const overage = quota.overage;
+  const overageUsed =
+    overage && typeof overage === "object"
+      ? (safePercentage((overage as Record<string, unknown>).used) ?? 0)
+      : 0;
+  return { used, total, remaining, overageUsed };
+}
+
+/**
+ * `quota_snapshots.raw_data` carries the interpretation flags hydration needs
+ * and — for windows that reported real credit counts — the counts themselves,
+ * in the shape `githubQuotaSnapshotStore.readSnapshotRows` already reads back
+ * (`source:"response_headers"`). Percentage-only windows keep the legacy
+ * boolean-only payload so old hydration behaviour is unchanged.
+ */
+function quotaSnapshotMetadata(
+  fractionReported: boolean,
+  overagePermitted: boolean,
+  creditCounts: QuotaCreditCounts | null,
+  remainingPercentage: number
+): string | null {
+  if (fractionReported && creditCounts) {
+    return JSON.stringify({
+      source: "response_headers",
+      creditsUsed: creditCounts.used,
+      entitlement: creditCounts.total,
+      remaining: creditCounts.remaining,
+      remainingPercentage,
+      unlimited: false,
+      overageUsed: creditCounts.overageUsed,
+      overagePermitted,
+    });
+  }
+  const metadata: Record<string, boolean> = {};
+  if (!fractionReported) metadata.fractionReported = false;
+  if (overagePermitted) metadata.overagePermitted = true;
+  return Object.keys(metadata).length > 0 ? JSON.stringify(metadata) : null;
+}
+
 function isExhausted(quotas: Record<string, QuotaInfo>): boolean {
-  const entries = Object.values(quotas).filter((q) => q.fractionReported !== false);
+  const entries = Object.values(quotas).filter(
+    (q) => q.fractionReported !== false && q.overagePermitted !== true
+  );
   if (entries.length === 0) return false;
   // Informational/unknown windows neither exhaust an account nor override a
-  // real exhausted window. In particular, spend telemetry is not a quota.
+  // real exhausted window. In particular, spend telemetry is not a quota, and
+  // a Copilot AI-credit window with `ovPerm=true` bills overage instead of
+  // rejecting traffic.
   return entries.every((q) => q.remainingPercentage <= 0);
 }
 
@@ -231,19 +297,54 @@ function earliestResetAt(quotas: Record<string, QuotaInfo>): string | null {
  */
 export function quotaSnapshotChanged(
   prior:
-    | { quotas?: Record<string, { remainingPercentage: number }>; exhausted?: boolean }
+    | {
+        quotas?: Record<
+          string,
+          { remainingPercentage: number; used?: number; total?: number; remaining?: number }
+        >;
+        exhausted?: boolean;
+      }
     | null
     | undefined,
   windowKey: string,
   remainingPercentage: number,
-  exhausted: boolean
+  exhausted: boolean,
+  creditCounts?: QuotaCreditCounts | null
 ): boolean {
   if (!prior) return true;
   const priorWindow = prior.quotas?.[windowKey];
   if (!priorWindow) return true;
-  return (
+  if (
     priorWindow.remainingPercentage !== remainingPercentage ||
     (prior.exhausted ?? false) !== exhausted
+  ) {
+    return true;
+  }
+  // A count change can leave the reported percentage untouched (the Copilot
+  // header carries one decimal), and a count-bearing window must heal a prior
+  // percentage-only row even when the bar did not move — persist either way.
+  if (creditCounts) {
+    return (
+      priorWindow.used !== creditCounts.used ||
+      priorWindow.total !== creditCounts.total ||
+      priorWindow.remaining !== creditCounts.remaining
+    );
+  }
+  return false;
+}
+
+/**
+ * Whether a raw quota entry reports paid overage (GitHub Copilot `ovPerm`,
+ * carried as `overage: { used, permitted }`). Accepts the flat spelling too so
+ * a cache entry rebuilt from a snapshot keeps the signal.
+ */
+function readOveragePermitted(quota: Record<string, unknown>): boolean {
+  if (quota.overagePermitted === true) return true;
+  const overage = quota.overage;
+  return (
+    typeof overage === "object" &&
+    overage !== null &&
+    (overage as Record<string, unknown>).permitted === true
   );
 }
 
@@ -252,6 +353,7 @@ function normalizeQuotas(rawQuotas: Record<string, unknown>): Record<string, Quo
   for (const [key, q] of Object.entries(rawQuotas)) {
     if (q && typeof q === "object") {
       const quota = q as Record<string, unknown>;
+      const overagePermitted = readOveragePermitted(quota);
       const windowSeconds =
         typeof quota.windowSeconds === "number" && Number.isFinite(quota.windowSeconds)
           ? quota.windowSeconds
@@ -269,12 +371,22 @@ function normalizeQuotas(rawQuotas: Record<string, unknown>): Record<string, Quo
         quota.fractionReported !== false &&
         quota.unlimited !== true &&
         (percentage !== undefined || boundedPercentage !== undefined);
+      const creditCounts = fractionReported ? readQuotaCreditCounts(quota) : null;
       result[key] = {
         // #10095 — thread through the "did upstream actually report this
         // window's fraction" signal (see UsageQuota in usage/quota.ts).
         remainingPercentage: fractionReported ? (percentage ?? boundedPercentage!) : 0,
         resetAt: typeof quota.resetAt === "string" ? quota.resetAt : null,
         fractionReported: fractionReported ? undefined : false,
+        ...(overagePermitted ? { overagePermitted: true } : {}),
+        ...(creditCounts
+          ? {
+              used: creditCounts.used,
+              total: creditCounts.total,
+              remaining: creditCounts.remaining,
+              ...(creditCounts.overageUsed > 0 ? { overageUsed: creditCounts.overageUsed } : {}),
+            }
+          : {}),
         ...(typeof quota.displayName === "string" && quota.displayName.trim()
           ? { displayName: quota.displayName.trim() }
           : {}),
@@ -796,6 +908,7 @@ export function setQuotaCache(
       if (!normalized) continue;
       const { remainingPercentage } = normalized;
       const fractionReported = normalized.fractionReported !== false;
+      const overagePermitted = normalized.overagePermitted === true;
       if (fractionReported) {
         recordProviderQuotaResetEventIfChanged({
           provider,
@@ -815,11 +928,24 @@ export function setQuotaCache(
       // percentage, not the connection-wide AND-across-all-windows aggregate
       // (`entry.exhausted`). A connection with one 0% window and other non-zero
       // windows previously never flagged that window's row as exhausted.
-      const windowExhausted = fractionReported && remainingPercentage <= 0;
+      const windowExhausted = fractionReported && !overagePermitted && remainingPercentage <= 0;
+      // Real credit counts (GitHub Copilot AI credits) also ride in `raw_data`,
+      // so a lossless row can be rebuilt without this cache's Provider Limits
+      // entry. Percentage-only windows keep the legacy metadata.
+      const creditCounts = fractionReported
+        ? readQuotaCreditCounts(quotaInfo as Record<string, unknown>)
+        : null;
       // #4438 — only persist on the first observation or a real change.
       if (
-        !quotaSnapshotChanged(prior, windowKey, remainingPercentage, windowExhausted) &&
-        prior?.quotas?.[windowKey]?.fractionReported === normalized.fractionReported
+        !quotaSnapshotChanged(
+          prior,
+          windowKey,
+          remainingPercentage,
+          windowExhausted,
+          creditCounts
+        ) &&
+        prior?.quotas?.[windowKey]?.fractionReported === normalized.fractionReported &&
+        prior?.quotas?.[windowKey]?.overagePermitted === normalized.overagePermitted
       )
         continue;
       try {
@@ -831,8 +957,14 @@ export function setQuotaCache(
           is_exhausted: windowExhausted ? 1 : 0,
           next_reset_at: normalized.resetAt,
           window_duration_ms: entry.windowDurationMs ?? null,
-          // Persist only the interpretation, never the raw provider payload.
-          raw_data: fractionReported ? null : JSON.stringify({ fractionReported: false }),
+          // Persist the interpretation flags plus any real credit counts —
+          // never the raw provider payload.
+          raw_data: quotaSnapshotMetadata(
+            fractionReported,
+            overagePermitted,
+            creditCounts,
+            remainingPercentage
+          ),
         });
       } catch (error) {
         console.error("[quotaCache] Failed to save snapshot:", error);
@@ -873,16 +1005,18 @@ function hydrateQuotaCacheFromSnapshots(connectionId: string): QuotaCacheEntry |
       nextResetAt?: string | null;
       windowDurationMs?: number | null;
       createdAt?: string;
-      rawData?: string | { fractionReported?: boolean } | null;
+      rawData?: string | { fractionReported?: boolean; overagePermitted?: boolean } | null;
     };
     const windowKey = camelSnapshot.windowKey ?? snapshot.window_key;
     if (!windowKey) continue;
     provider = provider || snapshot.provider || "";
     let fractionReported: false | undefined;
+    let overagePermitted: true | undefined;
     const rawData = camelSnapshot.rawData ?? snapshot.raw_data;
     try {
       const metadata = typeof rawData === "string" ? JSON.parse(rawData) : rawData;
       if (metadata?.fractionReported === false) fractionReported = false;
+      if (metadata?.overagePermitted === true) overagePermitted = true;
     } catch {
       // Legacy snapshots need not contain JSON metadata.
     }
@@ -898,6 +1032,7 @@ function hydrateQuotaCacheFromSnapshots(connectionId: string): QuotaCacheEntry |
       ),
       resetAt: camelSnapshot.nextResetAt ?? snapshot.next_reset_at ?? null,
       fractionReported,
+      ...(overagePermitted ? { overagePermitted } : {}),
     };
     const snapshotWindowDurationMs =
       camelSnapshot.windowDurationMs ?? snapshot.window_duration_ms ?? null;
@@ -994,10 +1129,15 @@ export function getQuotaWindowStatus(
     // If reset time has already passed, avoid stale cached percentages blocking selection.
     // #10095 — a window whose fraction upstream never reported is "unknown",
     // not "0% remaining"; never let it reach the exhaustion threshold.
+    // A Copilot AI-credit window with paid overage permitted keeps serving past
+    // zero, so it is a display reading, not a cutoff.
     // #17000 — opt-in (QUOTA_WINDOW_BOUNDED_PARK): a passed park deadline or an observation
     // older than the park cap no longer reaches the threshold.
     reachedThreshold:
-      windowExpired || window.fractionReported === false || isWindowParkReleased(entry, now)
+      windowExpired ||
+      window.fractionReported === false ||
+      window.overagePermitted === true ||
+      isWindowParkReleased(entry, now)
         ? false
         : remainingPercentage <= 0
           ? true
@@ -1016,7 +1156,7 @@ export function getQuotaWindowObservation(
   if (!entry) return null;
 
   const window = resolveQuotaWindow(entry.quotas, windowName);
-  if (!window || window.fractionReported === false) return null;
+  if (!window || window.fractionReported === false || window.overagePermitted === true) return null;
 
   const status = getQuotaWindowStatus(connectionId, windowName);
   if (!status) return null;

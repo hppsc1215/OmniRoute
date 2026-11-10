@@ -135,7 +135,7 @@ export function formatResetTime(date) {
     const days = Math.floor(totalHours / 24);
     const remainingHours = totalHours % 24;
     return `${days}d ${remainingHours}h ${remainingMinutes}m`;
-  } catch (error) {
+  } catch {
     return "-";
   }
 }
@@ -296,6 +296,11 @@ function matchFreePlanTier(raw: string, upper: string) {
     : null;
 }
 
+/** A GitHub Enterprise tenant has no per-seat plan string; its Copilot is Enterprise. */
+function gheCopilotEnterpriseTier(raw: string | null = null) {
+  return { key: "enterprise", label: "Enterprise", variant: "info", rank: 7, raw };
+}
+
 /**
  * Normalize provider-specific plan labels into a shared tier taxonomy.
  * Supported tiers: enterprise, business, team, ultra, pro, plus, lite, free, unknown.
@@ -304,12 +309,14 @@ function matchFreePlanTier(raw: string, upper: string) {
  */
 export function normalizePlanTier(plan, provider?: string | null) {
   const raw = typeof plan === "string" ? plan.trim() : "";
-  if (!raw) return unknownPlanTier(null);
+  if (!raw)
+    return provider === "ghe-copilot" ? gheCopilotEnterpriseTier(null) : unknownPlanTier(null);
 
   const upper = raw.toUpperCase();
 
   // Provider names that are not real plan tiers — treat as unknown
-  if (PROVIDER_PLAN_FALLBACKS.has(raw.toLowerCase())) return unknownPlanTier(raw);
+  if (PROVIDER_PLAN_FALLBACKS.has(raw.toLowerCase()))
+    return provider === "ghe-copilot" ? gheCopilotEnterpriseTier(raw) : unknownPlanTier(raw);
 
   // Match Anthropic bootstrap strings (claude_max, default_claude_max_20x, etc.)
   // before the generic PRO/TEAM checks so underscored values don't fall through.

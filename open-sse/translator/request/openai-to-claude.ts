@@ -9,6 +9,7 @@ import {
   applyKimiCodingThinking,
   createDefaultClaudeCacheControl,
 } from "../helpers/claudeHelper.ts";
+import { requestCarriesCacheControl } from "../../utils/cacheControlPolicy.ts";
 import { DEFAULT_THINKING_CLAUDE_SIGNATURE } from "../../config/defaultThinkingSignature.ts";
 import { restoreClaudeThinkingBlocks } from "../../services/claudeThinkingStore.ts";
 import {
@@ -174,6 +175,11 @@ export function openaiToClaudeRequest(
   const disableToolPrefix = body?._disableToolPrefix === true;
   const routedProvider = credentials?._provider;
   const isKimiCoding = routedProvider === "kimi-coding" || routedProvider === "kimi-coding-apikey";
+  // A client that already chose its own breakpoints (ai-sdk style `cache_control`
+  // on content parts, even in OpenAI shape) owns the layout: injecting our three
+  // anchors on top would burn 2-3 of Anthropic's 4 slots and displace the client's
+  // deepest marker. prepareClaudeRequest() fills any gap that is left (budget-capped).
+  const clientSuppliedCacheControl = requestCarriesCacheControl(body);
 
   // Tool name mapping for Claude OAuth (capitalizedName → originalName)
   const toolNameMap = new Map();
@@ -347,6 +353,8 @@ export function openaiToClaudeRequest(
 
   // Messages
   const systemParts: string[] = [];
+  // Client-supplied marker on a role:"system" turn (flattened below).
+  let systemCacheControl: { type: string; ttl?: string } | undefined;
 
   if (body.messages && Array.isArray(body.messages)) {
     // Extract system messages (T15: handle both string and array content)
@@ -354,6 +362,17 @@ export function openaiToClaudeRequest(
     // for system-level instructions, and it must reach the Claude system field, not become an assistant turn.
     for (const msg of body.messages) {
       if (msg.role === "system" || msg.role === "developer") {
+        // Keep the marker of a client that put `cache_control` on its system turn:
+        // the parts are flattened into one block below, so remember the last marker.
+        if (Array.isArray(msg.content)) {
+          for (const part of msg.content) {
+            if (part && typeof part === "object" && part.cache_control !== undefined) {
+              systemCacheControl = part.cache_control as { type: string; ttl?: string };
+            }
+          }
+        } else if (msg.cache_control !== undefined) {
+          systemCacheControl = msg.cache_control as { type: string; ttl?: string };
+        }
         systemParts.push(
           typeof msg.content === "string" ? msg.content : normalizeContentToString(msg.content)
         );
@@ -444,18 +463,21 @@ export function openaiToClaudeRequest(
 
     result.messages = enforceToolResultAdjacency(result.messages);
 
-    // Add cache_control to last assistant message
-    for (let i = result.messages.length - 1; i >= 0; i--) {
-      const message = result.messages[i];
-      if (
-        message.role === "assistant" &&
-        Array.isArray(message.content) &&
-        message.content.length > 0
-      ) {
-        const lastBlock = message.content[message.content.length - 1];
-        if (lastBlock) {
-          lastBlock.cache_control = { type: "ephemeral" };
-          break;
+    // Add cache_control to last assistant message (only when the client did not
+    // pick its own breakpoints — see clientSuppliedCacheControl above).
+    if (!clientSuppliedCacheControl) {
+      for (let i = result.messages.length - 1; i >= 0; i--) {
+        const message = result.messages[i];
+        if (
+          message.role === "assistant" &&
+          Array.isArray(message.content) &&
+          message.content.length > 0
+        ) {
+          const lastBlock = message.content[message.content.length - 1];
+          if (lastBlock) {
+            lastBlock.cache_control = { type: "ephemeral" };
+            break;
+          }
         }
       }
     }
@@ -533,11 +555,14 @@ export function openaiToClaudeRequest(
     }
 
     // Cache breakpoint on the last non-defer-loading tool — Anthropic
-    // rejects cache_control on defer_loading tools.
-    for (let i = result.tools.length - 1; i >= 0; i--) {
-      if (!result.tools[i].defer_loading) {
-        result.tools[i].cache_control = createDefaultClaudeCacheControl(routedProvider);
-        break;
+    // rejects cache_control on defer_loading tools. Skipped when the client
+    // already supplied its own breakpoints (see clientSuppliedCacheControl).
+    if (!clientSuppliedCacheControl) {
+      for (let i = result.tools.length - 1; i >= 0; i--) {
+        if (!result.tools[i].defer_loading) {
+          result.tools[i].cache_control = createDefaultClaudeCacheControl(routedProvider);
+          break;
+        }
       }
     }
   }
@@ -585,11 +610,12 @@ export function openaiToClaudeRequest(
   // prompt is silently dropped when no role="system" messages exist in body.messages.
   if (systemParts.length > 0) {
     const systemText = systemParts.join("\n");
-    const systemBlock = {
-      type: "text",
-      text: systemText,
-      cache_control: createDefaultClaudeCacheControl(routedProvider),
-    };
+    const systemBlock: ClaudeSystemBlock = { type: "text", text: systemText };
+    if (systemCacheControl !== undefined) {
+      systemBlock.cache_control = systemCacheControl;
+    } else if (!clientSuppliedCacheControl) {
+      systemBlock.cache_control = createDefaultClaudeCacheControl(routedProvider);
+    }
     // Merge with existing body.system if present
     if (Array.isArray(body.system)) {
       result.system = [...body.system, systemBlock];
@@ -647,7 +673,8 @@ function getContentBlocksFromMessage(
     // A nested `cache_control` is invalid inside `tool_result.content`; hoist it
     // onto the tool_result block. Also accept a marker already hoisted onto the
     // tool MESSAGE by filterToOpenAIFormat (openai-compat passthrough path).
-    const { content: hoistedContent, cacheControl } = hoistNestedToolResultCacheControl(toolContent);
+    const { content: hoistedContent, cacheControl } =
+      hoistNestedToolResultCacheControl(toolContent);
     const toolResultCacheControl =
       msg.cache_control !== undefined ? msg.cache_control : cacheControl;
     blocks.push({
@@ -670,7 +697,15 @@ function getContentBlocksFromMessage(
     } else if (Array.isArray(msg.content)) {
       for (const part of msg.content) {
         if (part.type === "text" && part.text) {
-          blocks.push({ type: "text", text: part.text });
+          // Client `cache_control` markers must survive the shape translation:
+          // OpenAI format does not define the field, so its presence is an explicit
+          // opt-in by an ai-sdk style client (opencode & co). Dropping it here made
+          // every such client's breakpoints vanish (cache hit rate 0).
+          blocks.push({
+            type: "text",
+            text: part.text,
+            ...(part.cache_control !== undefined ? { cache_control: part.cache_control } : {}),
+          });
         } else if (part.type === "tool_result") {
           // Pair an id-less tool_result with the oldest pending tool_use; skip it only
           // when nothing is pending (it would be useless and may cause errors).
@@ -734,7 +769,12 @@ function getContentBlocksFromMessage(
     if (Array.isArray(msg.content)) {
       for (const part of msg.content) {
         if (part.type === "text" && part.text) {
-          blocks.push({ type: "text", text: part.text });
+          // Same opt-in reasoning as the user branch: never drop a marker the client set.
+          blocks.push({
+            type: "text",
+            text: part.text,
+            ...(part.cache_control !== undefined ? { cache_control: part.cache_control } : {}),
+          });
         } else if (part.type === "thinking" || part.type === "redacted_thinking") {
           // #6953 — thinking blocks with signature:"" (empty string) come from non-Anthropic
           // providers (codex/gpt-5.x).  Anthropic rejects replayed `thinking` blocks that

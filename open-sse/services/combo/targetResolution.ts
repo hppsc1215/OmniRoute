@@ -52,6 +52,10 @@ import {
   resolveWeightedTargets,
 } from "./comboStructure.ts";
 import { applyContextRequirements } from "./contextRequirements.ts";
+import {
+  applyPromptTokenCeilings,
+  buildPromptTokenCeilingResponse,
+} from "./promptTokenCeiling.ts";
 import { recordComboFailure } from "./failureTracker.ts";
 import {
   buildAllTargetsCoolingDownResponse,
@@ -568,6 +572,28 @@ async function applyContinuityFilters(
   let orderedTargets = sticky.targets;
   if (!cacheStrategyAffinityApplied) {
     orderedTargets = orderTargetsByEvalScores(orderedTargets, config.evalRouting, log);
+  }
+  // Long-context price-tier guard (open-sse/services/combo/promptTokenCeiling.ts):
+  // a target with `maxPromptTokens` is dropped BEFORE compatibility filtering so
+  // it never reaches dispatch — nor the compat-rejected last-resort tier — with
+  // a prompt above its ceiling.
+  const promptTokenCeilings = applyPromptTokenCeilings({
+    targets: orderedTargets,
+    body,
+    config: config as Record<string, unknown>,
+    log,
+  });
+  if (promptTokenCeilings.excluded.length > 0) {
+    if (promptTokenCeilings.targets.length === 0) {
+      return {
+        earlyResponse: buildPromptTokenCeilingResponse({
+          comboName: combo.name,
+          poolSize: orderedTargets.length,
+          excluded: promptTokenCeilings.excluded,
+        }),
+      };
+    }
+    orderedTargets = promptTokenCeilings.targets;
   }
   // #8488 / #8494: fail closed when hard capability filters empty the pool.
   // Opt-in escape hatch: combo.config.compatFilterFailOpen OR settings.compatFilterFailOpen.

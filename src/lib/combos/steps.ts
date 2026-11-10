@@ -26,6 +26,13 @@ export interface ComboModelStep {
   prompt?: string | null;
   tags?: string[];
   fallbackOnlyOnQuotaExhaustion?: boolean;
+  /**
+   * Prompt-size ceiling for this step (see
+   * open-sse/services/combo/promptTokenCeiling.ts): a request whose estimated
+   * prompt exceeds it skips the step and falls through to the next target, so
+   * a model with a long-context price tier is only used below that tier.
+   */
+  maxPromptTokens?: number;
 }
 
 export interface ComboRefStep {
@@ -85,6 +92,16 @@ function toWeight(value: unknown): number {
 
   if (!Number.isFinite(parsed)) return 0;
   return Math.max(0, Math.min(100, parsed));
+}
+
+function toPositiveInteger(value: unknown): number | null {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim().length > 0
+        ? Number(value)
+        : Number.NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : null;
 }
 
 function collectComboNames(allCombos: ComboCollectionLike): Set<string> {
@@ -321,6 +338,7 @@ export function normalizeComboStep(
   const label = toTrimmedString(value.label);
   const prompt = toTrimmedString(value.prompt);
   const fallbackOnlyOnQuotaExhaustion = value.fallbackOnlyOnQuotaExhaustion === true;
+  const maxPromptTokens = toPositiveInteger(value.maxPromptTokens);
 
   if (value.kind === "combo-ref") {
     const comboRefName = toTrimmedString(value.comboName);
@@ -445,6 +463,7 @@ export function normalizeComboStep(
     ...(tags && tags.length > 0 ? { tags } : {}),
     ...(allowedConnectionIds && allowedConnectionIds.length > 0 ? { allowedConnectionIds } : {}),
     ...(fallbackOnlyOnQuotaExhaustion ? { fallbackOnlyOnQuotaExhaustion: true } : {}),
+    ...(maxPromptTokens != null ? { maxPromptTokens } : {}),
   };
 }
 

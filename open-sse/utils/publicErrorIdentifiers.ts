@@ -195,6 +195,7 @@ const SAFE_PUBLIC_ERROR_IDENTIFIERS = new Set([
   "premium_model_requires_key",
   "previous_response_not_found",
   "prompt_attachment_integrity",
+  "prompt_token_ceiling_exceeded",
   "provider_circuit_half_open",
   "provider_circuit_open",
   "provider_deprecated",

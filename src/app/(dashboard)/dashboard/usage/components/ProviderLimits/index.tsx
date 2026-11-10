@@ -461,6 +461,14 @@ export default function ProviderLimits({
             message: data.message || null,
             raw: data,
             stale: data._stale ? { since: data._staleSince, reason: data._staleReason } : null,
+            // A passive Copilot capture is a successful read, not a failed one:
+            // it carries `_passive`/`_observedAt` instead of `_stale`.
+            passive:
+              data._passive === true
+                ? {
+                    observedAt: typeof data._observedAt === "string" ? data._observedAt : null,
+                  }
+                : null,
           },
         }));
         setLastRefreshedAt((prev) => ({

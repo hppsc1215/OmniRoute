@@ -149,6 +149,9 @@ function normalizeRuntimeStep(
     ...(step.kind === "model" && step.fallbackOnlyOnQuotaExhaustion
       ? { fallbackOnlyOnQuotaExhaustion: true }
       : {}),
+    ...(step.kind === "model" && typeof step.maxPromptTokens === "number" && step.maxPromptTokens > 0
+      ? { maxPromptTokens: step.maxPromptTokens }
+      : {}),
   } satisfies ResolvedComboTarget;
 }
 

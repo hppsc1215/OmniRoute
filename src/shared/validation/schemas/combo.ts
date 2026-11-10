@@ -36,6 +36,14 @@ export const comboModelStepInputSchema = z.object({
   // step's input, and this `prompt` is injected as that step's system instruction.
   // Ignored by every other strategy, so it is fully backward-compatible.
   prompt: z.string().trim().min(1).max(20000).optional(),
+  // Long-context price-tier guard (open-sse/services/combo/promptTokenCeiling.ts):
+  // the largest prompt this step may serve. A request whose estimated prompt
+  // exceeds it skips the step and falls through to the next target, so a model
+  // billed at a higher rate above a prompt-size threshold (e.g. Copilot's
+  // Claude Haiku 5.5 above 100k prompt tokens) stays inside its cheap tier.
+  // The comparison uses the calibrated local estimate; see
+  // `promptTokenSafetyFactor` in the combo config for the cold-start margin.
+  maxPromptTokens: z.coerce.number().int().min(1000).max(10_000_000).optional(),
   ...comboStepMetaSchema,
 });
 
