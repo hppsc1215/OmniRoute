@@ -34,8 +34,6 @@ export interface ModelCompatState {
   effectiveModelNormalize: (modelId: string, protocol?: string) => boolean;
   /** Stable callback: effective preserve-developer flag for (modelId, protocol). */
   effectiveModelPreserveDeveloper: (modelId: string, protocol?: string) => boolean;
-  /** Stable callback: is the model-level includeThoughts override on? */
-  effectiveModelIncludeThoughts: (modelId: string) => boolean;
   /** Stable callback: upstream-headers record for (modelId, protocol). */
   getUpstreamHeadersRecord: (modelId: string, protocol: string) => Record<string, string>;
   /** Stable callback: should the normalize compat badge be shown? */
@@ -74,11 +72,6 @@ export function useModelCompatState(
     [customMap, overrideMap]
   );
 
-  const effectiveModelIncludeThoughts = useCallback(
-    (modelId: string) => overrideMap.get(modelId)?.includeThoughts === true,
-    [overrideMap]
-  );
-
   const getUpstreamHeadersRecord = useCallback(
     (modelId: string, protocol: string) =>
       effectiveUpstreamHeadersForProtocol(modelId, protocol, customMap, overrideMap),
@@ -101,7 +94,6 @@ export function useModelCompatState(
     isModelHidden,
     effectiveModelNormalize,
     effectiveModelPreserveDeveloper,
-    effectiveModelIncludeThoughts,
     getUpstreamHeadersRecord,
     anyNormalizeCompatBadge: anyNormalizeCompatBadgeFn,
     anyNoPreserveCompatBadge: anyNoPreserveCompatBadgeFn,
