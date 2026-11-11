@@ -56,12 +56,12 @@ interface ErrorBodyLike {
  * Run the executor with valid-looking credentials. `tool_choice` cases short-
  * circuit on the static capability guard, so Playwright is never reached.
  * `reasoning_effort` cases (#13381) now require a mocked browser to reach the
- * Extended Thinking selection step — `gemini-3.1-pro` is the default model
- * mode (no interaction attempted), so it never interferes with that check.
+ * Extended Thinking selection step — `gemini-3.5-flash-lite` is the default
+ * model mode (no interaction attempted), so it never interferes with that check.
  */
 async function run(body: Record<string, unknown>) {
   return new GeminiWebExecutor().execute({
-    model: "gemini-3.1-pro",
+    model: "gemini-3.5-flash-lite",
     body: { messages: [{ role: "user", content: "hi" }], stream: false, ...body },
     stream: false,
     credentials: { apiKey: "__Secure-1PSID=test-cookie" },
@@ -176,38 +176,33 @@ test("#9356 forcing is rejected on its own terms, even with no tools[] array", (
 // before the credential check.
 
 test(
-  "#9356/#13381 executor returns 400 for reasoning_effort=high once the Extended Thinking " +
-    "control cannot be confirmed (genuinely attempted via a mocked browser, not a blanket reject)",
+  "#9356/#13381 executor no longer rejects reasoning_effort=high up front: it launches the " +
+    "browser and treats thinking depth as a soft hint",
   async () => {
     const playwright = await import("playwright");
     const originalLaunch = playwright.chromium.launch;
-    playwright.chromium.launch = (async () => ({
-      newContext: async () => ({
-        addCookies: async () => {},
-        newPage: async () => ({
-          on: () => {},
-          goto: async () => {},
-          waitForTimeout: async () => {},
-          // No Extended Thinking control exists in this fake page — every
-          // selector lookup reports "not found", proving the fail-closed path.
-          waitForSelector: async () => null,
-          keyboard: { type: async () => {}, insertText: async () => {}, press: async () => {} },
-        }),
-      }),
-      close: async () => {},
-    })) as unknown as typeof originalLaunch;
+    let launched = false;
+    // Failing the launch proves the request got PAST the static pre-browser guard and
+    // reached the browser step — which is the contract this test pins down. Whether
+    // the thinking level can be confirmed is covered in
+    // tests/unit/issue-13381-gemini-web-model-selection.test.ts (soft hint: never 400).
+    playwright.chromium.launch = (async () => {
+      launched = true;
+      throw new Error("browser launch refused by test");
+    }) as unknown as typeof originalLaunch;
 
     try {
       const result = await run({ reasoning_effort: "high" });
 
-      assert.equal(result.response.status, 400);
-      const body = (await result.response.json()) as ErrorBodyLike;
-      assert.equal(body.error.code, GEMINI_WEB_UNSUPPORTED_CONTROL_CODE);
-      assert.match(body.error.message, /Extended Thinking/);
       assert.equal(
-        body.error.message.includes("at /"),
-        false,
-        "error bodies must stay sanitized — no stack traces"
+        launched,
+        true,
+        "reasoning_effort=high must not be rejected before the browser is launched"
+      );
+      assert.notEqual(
+        result.response.status,
+        400,
+        "a client-side reasoning_effort must never turn into a 400 for gemini-web"
       );
     } finally {
       playwright.chromium.launch = originalLaunch;

@@ -1,110 +1,149 @@
 /**
  * Per-model Gemini Web UI mode selection + verification (#13381, Option B).
  *
- * Before this module, `GeminiWebExecutor.execute()` read the `model` field
- * only AFTER Gemini had already answered — purely to stamp the OpenAI-shaped
- * response, never to influence what was actually typed/clicked in the
- * browser (../gemini-web.ts). Every advertised `gweb/<model>` alias ran the
- * identical automation, so the response `model` field was a caller-supplied
- * label, not an observed fact.
+ * `gemini.google.com/app` exposes its models through a **menu picker**: a button
+ * (`[data-test-id="bard-mode-menu-button"]`) labelled
+ * "Modusauswahl öffnen, derzeit ausgewählt: <mode>" / "Open mode picker,
+ * currently <mode>" opens a list of `[role="menuitemradio"]` options. Selecting a
+ * model therefore means opening that picker, clicking the option, and reading the
+ * button's label back to prove the switch landed — a click alone is never treated
+ * as success (#13381).
  *
- * This module gives the executor a real selection step: for each advertised
- * model (and for the Extended Thinking control, #13381 follow-up comment
- * 2026-09-11), it tries the corresponding UI control, then READS BACK the
- * active-mode indicator to confirm the switch actually took effect before
- * the caller is allowed to proceed. `gemini-3.1-pro` is treated as the mode
- * `gemini.google.com/app` already opens to (no interaction needed); every
- * other advertised model requires a confirmed switch.
+ * The previous implementation assumed a toggle that *cycled* modes, used
+ * `button[aria-haspopup="menu"]` (which matches "Upload & tools" first in document
+ * order), and clicked with Playwright (which Google's consent overlay intercepts,
+ * 30 s timeout). Measured 2026-11-11 against a live Pro account, locale de-DE:
+ *   - picker label: "Modusauswahl öffnen, derzeit ausgewählt: Argon"
+ *   - options: "Schnellinfo 3.5 Flash-Lite", "Vielseitige Unterstützung 3.8 Flash",
+ *     "Detaillierte Recherche 3.1 Pro", "Code und Analyse 4 Argon",
+ *     "Denkaufwand" → "Niedrig" / "Mittel" / "Hoch"
+ *   - the account remembered "Argon" from a previous session, so NO mode can be
+ *     assumed active on load — every request selects and verifies explicitly.
+ *   - DOM `click()` on the picker and on the option works; `elementHandle.click`
+ *     does not (consent overlay).
  *
- * ⚠️ SELECTOR SET IS UNVALIDATED. Every CSS selector below is a best-effort
- * guess at Gemini's current DOM, not a value confirmed against a live
- * account — this checkout has no live Gemini session and no way to inspect
- * Google's current markup (which also changes without notice). That is fine
- * BY DESIGN: `selectGeminiUiMode()` never trusts an unconfirmed guess. If a
- * selector is wrong — the likely outcome until the mandatory live smoke in
- * the PR is run and these values are corrected against the real DOM — the
- * toggle/indicator lookup simply fails, the read-back does not confirm the
- * requested mode, and the caller gets a clear 400
- * (`unsupported_control_for_provider`) instead of a response silently
- * labeled with a model/mode that never actually ran — the exact dishonesty
- * #13381 reported. Update the selectors only after inspecting the real DOM
- * on a live account, never from guesswork.
+ * Fail-closed stays the contract for model selection: an unconfirmed switch
+ * rejects the request with `unsupported_control_for_provider` instead of
+ * answering under a label that was never actually active. Thinking depth is a
+ * soft hint and is attempted best-effort by the executor.
  */
 
 /** Reasons `selectGeminiUiMode`/`selectGeminiModel` can fail closed. */
 export type GeminiModeSelectionFailureReason =
-  "control_not_found" | "indicator_not_found" | "indicator_mismatch" | "unknown_model";
+  | "control_not_found"
+  | "option_not_found"
+  | "indicator_mismatch"
+  | "unknown_model";
 
 export interface GeminiWebModeDescriptor {
   /** The advertised `gweb/<model>` id, or a synthetic label for non-model controls. */
   readonly id: string;
   /**
-   * true: this is the mode `gemini.google.com/app` already shows on load — no
-   * UI interaction is attempted, nothing to confirm.
+   * true: this is a mode `gemini.google.com/app` already shows on load — no UI
+   * interaction is attempted, nothing to confirm. No *model* sets it: the app
+   * remembers the last-used mode per account (measured: opened in "Argon"), so
+   * "the default" is not a stable assumption.
    */
   readonly isDefault: boolean;
-  /** UNVALIDATED — opens/activates the control for this mode. Ignored when `isDefault`. */
-  readonly toggleSelector?: string;
-  /** UNVALIDATED — element whose text proves which mode is now active. */
-  readonly activeIndicatorSelector?: string;
-  /** Text the active-mode indicator must contain once the switch is confirmed. */
+  /** Matched against each picker option's visible text to pick the mode. */
+  readonly menuLabelPattern?: RegExp;
+  /** Text the picker's read-back label must match once the switch is confirmed. */
   readonly expectedIndicatorPattern?: RegExp;
 }
 
 /**
- * Model -> Gemini UI mode map for the three `gweb/<model>` ids advertised by
- * `open-sse/config/providers/registry/gemini/web/index.ts`. Keep the two
- * catalogs in sync: an advertised model with no entry here fails closed as
- * `unknown_model` (see `resolveGeminiModelMode`), which is the intended,
- * honest behavior for a model this module cannot yet select.
+ * The model picker button. `aria-haspopup="menu"` alone is too broad (see
+ * header) and the aria-label is localized — hence data-test-id first, then both
+ * measured locale spellings.
+ */
+export const GEMINI_MODE_PICKER_SELECTOR =
+  '[data-test-id="bard-mode-menu-button"], button[aria-label*="mode picker" i], ' +
+  'button[aria-label*="Modusauswahl" i]';
+
+/** Poll cadence while the menu animates in / the label updates. */
+const SELECTION_POLL_INTERVAL_MS = 200;
+
+/**
+ * Model -> Gemini UI mode map for the `gweb/<model>` ids advertised by
+ * `open-sse/config/providers/registry/gemini/web/index.ts`. Keep both catalogs in
+ * sync: an advertised model with no entry here fails closed as `unknown_model`
+ * (see `resolveGeminiModelMode`) — the honest outcome for a model this module
+ * cannot select.
+ *
+ * Patterns anchor on the model name/version instead of the localized marketing
+ * prefix ("Schnellinfo" / "Quick answers") so they survive a locale switch.
  */
 export const GEMINI_WEB_MODEL_MODES: Readonly<Record<string, GeminiWebModeDescriptor>> = {
-  "gemini-3.1-pro": { id: "gemini-3.1-pro", isDefault: true },
-  "gemini-3.7-flash": {
-    id: "gemini-3.7-flash",
+  "gemini-3.5-flash-lite": {
+    id: "gemini-3.5-flash-lite",
     isDefault: false,
-    toggleSelector:
-      '[data-test-id="bard-mode-menu-button"], button[aria-haspopup="menu"][aria-label*="model" i]',
-    activeIndicatorSelector:
-      '[data-test-id="bard-mode-menu-button"] .mode-title, [data-test-id="bard-mode-menu-button"]',
-    expectedIndicatorPattern: /\bflash\b(?!.*\blite\b)/i,
+    menuLabelPattern: /flash-lite/i,
+    expectedIndicatorPattern: /flash-lite/i,
   },
-  "gemini-3.1-flash-lite": {
-    id: "gemini-3.1-flash-lite",
+  "gemini-3.8-flash": {
+    id: "gemini-3.8-flash",
     isDefault: false,
-    toggleSelector:
-      '[data-test-id="bard-mode-menu-button"], button[aria-haspopup="menu"][aria-label*="model" i]',
-    activeIndicatorSelector:
-      '[data-test-id="bard-mode-menu-button"] .mode-title, [data-test-id="bard-mode-menu-button"]',
-    expectedIndicatorPattern: /flash.*\blite\b/i,
+    menuLabelPattern: /3\.8\s*flash/i,
+    // Measured read-back: the button drops the version and says "…: Flash".
+    // Must not match the Flash-Lite label, hence the negative lookahead.
+    expectedIndicatorPattern: /flash(?!\s*-?\s*lite)/i,
+  },
+  "gemini-3.1-pro": {
+    id: "gemini-3.1-pro",
+    isDefault: false,
+    menuLabelPattern: /3\.1\s*pro/i,
+    // Same truncation: the button says "…: Pro".
+    expectedIndicatorPattern: /\bpro\b/i,
+  },
+  "gemini-4-argon": {
+    id: "gemini-4-argon",
+    isDefault: false,
+    menuLabelPattern: /\bargon\b/i,
+    expectedIndicatorPattern: /\bargon\b/i,
   },
 };
 
-/** The Extended Thinking control (#13381 follow-up, 2026-09-11) — account-dependent, not a model. */
-export const GEMINI_WEB_EXTENDED_THINKING_MODE: GeminiWebModeDescriptor = {
-  id: "extended-thinking",
-  isDefault: false,
-  toggleSelector:
-    '[data-test-id="deep-think-toggle"], button[aria-label*="extended thinking" i], ' +
-    'button[aria-label*="deep think" i]',
-  activeIndicatorSelector:
-    '[data-test-id="deep-think-toggle"][aria-pressed="true"], [data-test-id="deep-think-toggle"].is-active',
-  expectedIndicatorPattern: /thinking|deep think/i,
+/**
+ * The "Denkaufwand" (thinking effort) levels (#13381 follow-up). Not models: they
+ * change how long Gemini reasons, and the picker label does not echo them, so
+ * they are verified through the option's own selected state instead.
+ */
+export const GEMINI_WEB_THINKING_LEVELS: Readonly<
+  Record<"low" | "medium" | "high", GeminiWebModeDescriptor>
+> = {
+  low: {
+    id: "thinking-low",
+    isDefault: false,
+    menuLabelPattern: /\b(niedrig|low)\b/i,
+    expectedIndicatorPattern: /\b(niedrig|low)\b/i,
+  },
+  medium: {
+    id: "thinking-medium",
+    isDefault: false,
+    menuLabelPattern: /\b(mittel|medium)\b/i,
+    expectedIndicatorPattern: /\b(mittel|medium)\b/i,
+  },
+  high: {
+    id: "thinking-high",
+    isDefault: false,
+    menuLabelPattern: /\b(hoch|high)\b/i,
+    expectedIndicatorPattern: /\b(hoch|high)\b/i,
+  },
 };
 
-/** Minimal Playwright-shaped element the read-back needs — real `ElementHandle`s satisfy this. */
-export interface GeminiAutomationElement {
-  click(): Promise<void>;
-  textContent?(): Promise<string | null>;
-  innerText?(): Promise<string>;
+/** Map an OpenAI-style `reasoning_effort` onto a measured "Denkaufwand" level. */
+export function resolveThinkingLevel(effort: unknown): "low" | "medium" | "high" {
+  const value = typeof effort === "string" ? effort.trim().toLowerCase() : "";
+  if (value === "medium") return "medium";
+  if (value === "high" || value === "xhigh" || value === "max" || value === "ultra") return "high";
+  return "low";
 }
 
 /** Minimal Playwright-shaped page the selection step needs — the real `Page` satisfies this. */
 export interface GeminiAutomationPage {
-  waitForSelector(
-    selector: string,
-    opts?: { timeout?: number }
-  ): Promise<GeminiAutomationElement | null>;
+  evaluate<R>(pageFunction: () => R): Promise<R>;
+  evaluate<R, A>(pageFunction: (arg: A) => R, arg: A): Promise<R>;
+  waitForTimeout(milliseconds: number): Promise<unknown>;
 }
 
 export interface GeminiModeSelectionResult {
@@ -113,26 +152,145 @@ export interface GeminiModeSelectionResult {
   descriptor?: GeminiWebModeDescriptor;
 }
 
-async function readIndicatorText(el: GeminiAutomationElement): Promise<string | null> {
-  try {
-    if (typeof el.textContent === "function") {
-      const text = await el.textContent();
-      if (typeof text === "string") return text;
+/**
+ * Wait until the mode picker exists in the DOM. Measured 2026-11-11: the composer
+ * is interactive ~1.2 s BEFORE the picker renders, so a single lookup right after
+ * the composer appears reported "control_not_found" and rejected the request.
+ */
+async function waitForModePicker(
+  page: GeminiAutomationPage,
+  timeoutMs: number
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    let present = false;
+    try {
+      present = await page.evaluate(() => {
+        return Boolean(
+          document.querySelector('[data-test-id="bard-mode-menu-button"]') ||
+            document.querySelector('button[aria-label*="mode picker" i]') ||
+            document.querySelector('button[aria-label*="Modusauswahl" i]')
+        );
+      });
+    } catch {
+      return false;
     }
-    if (typeof el.innerText === "function") {
-      return await el.innerText();
-    }
-  } catch {
-    // Unreadable is treated the same as "did not confirm" below — never a pass.
+    if (present) return true;
+    await page.waitForTimeout(SELECTION_POLL_INTERVAL_MS);
   }
-  return null;
+  return false;
+}
+
+/** Open the mode picker. Returns false when the picker never appears. */
+async function openModePicker(
+  page: GeminiAutomationPage,
+  timeoutMs = 10000
+): Promise<boolean> {
+  if (!(await waitForModePicker(page, timeoutMs))) return false;
+  try {
+    return await page.evaluate(() => {
+      const el =
+        document.querySelector('[data-test-id="bard-mode-menu-button"]') ||
+        document.querySelector('button[aria-label*="mode picker" i]') ||
+        document.querySelector('button[aria-label*="Modusauswahl" i]');
+      if (!el) return false;
+      el.click();
+      return true;
+    });
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Click the picker option matching `patternSource`; returns its label or "".
+ * DOM `click()` on purpose: the consent overlay swallows Playwright clicks.
+ */
+async function clickModeOption(
+  page: GeminiAutomationPage,
+  patternSource: string
+): Promise<string> {
+  try {
+    return await page.evaluate((source: string) => {
+      const re = new RegExp(source, "i");
+      const options = Array.from(
+        document.querySelectorAll('[role="menuitemradio"], [role="menuitem"]')
+      );
+      for (const el of options) {
+        const label = (el.innerText || "").replace(/\s+/g, " ").trim();
+        if (!label || !re.test(label)) continue;
+        el.click();
+        return label;
+      }
+      return "";
+    }, patternSource);
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * After clicking, report whether the option itself says it is selected.
+ * `null` means this DOM offers no such signal (older/other renders).
+ */
+async function readOptionChecked(
+  page: GeminiAutomationPage,
+  patternSource: string
+): Promise<boolean | null> {
+  try {
+    return await page.evaluate((source: string) => {
+      const re = new RegExp(source, "i");
+      const options = Array.from(
+        document.querySelectorAll('[role="menuitemradio"], [role="menuitem"]')
+      );
+      for (const el of options) {
+        const label = (el.innerText || "").replace(/\s+/g, " ").trim();
+        if (!label || !re.test(label)) continue;
+        const checked = el.getAttribute("aria-checked") ?? el.getAttribute("aria-selected");
+        if (checked === null) return null;
+        return checked === "true";
+      }
+      return null;
+    }, patternSource);
+  } catch {
+    return null;
+  }
+}
+
+/** Read the picker button's `aria-label` ("… derzeit ausgewählt: <mode>"). */
+async function readModePickerLabel(page: GeminiAutomationPage): Promise<string> {
+  try {
+    return await page.evaluate(() => {
+      const el =
+        document.querySelector('[data-test-id="bard-mode-menu-button"]') ||
+        document.querySelector('button[aria-label*="mode picker" i]') ||
+        document.querySelector('button[aria-label*="Modusauswahl" i]');
+      return el ? el.getAttribute("aria-label") || "" : "";
+    });
+  } catch {
+    return "";
+  }
+}
+
+/** Click an option, polling while the menu animates in. Shared by both controls. */
+async function clickOptionWithRetry(
+  page: GeminiAutomationPage,
+  labelPattern: RegExp,
+  timeoutMs: number
+): Promise<string> {
+  let clickedLabel = "";
+  const deadline = Date.now() + timeoutMs;
+  while (!clickedLabel && Date.now() < deadline) {
+    clickedLabel = await clickModeOption(page, labelPattern.source);
+    if (!clickedLabel) await page.waitForTimeout(SELECTION_POLL_INTERVAL_MS);
+  }
+  return clickedLabel;
 }
 
 /**
  * Try to switch the live Gemini Web page to `descriptor`'s mode, then READ
- * BACK the active-mode indicator before reporting success. A click landing
- * is never itself treated as success — only a confirmed, pattern-matching
- * indicator text is (#13381).
+ * BACK the picker label before reporting success. A click landing is never
+ * itself treated as success — only a pattern-matching label is (#13381).
  */
 export async function selectGeminiUiMode(
   page: GeminiAutomationPage,
@@ -141,29 +299,28 @@ export async function selectGeminiUiMode(
 ): Promise<GeminiModeSelectionResult> {
   if (descriptor.isDefault) return { confirmed: true, descriptor };
 
-  const { toggleSelector, activeIndicatorSelector, expectedIndicatorPattern } = descriptor;
-  if (!toggleSelector || !activeIndicatorSelector || !expectedIndicatorPattern) {
+  const labelPattern = descriptor.menuLabelPattern;
+  const expected = descriptor.expectedIndicatorPattern;
+  if (!labelPattern || !expected) {
     return { confirmed: false, reason: "control_not_found", descriptor };
   }
 
-  const toggle = await page
-    .waitForSelector(toggleSelector, { timeout: timeoutMs })
-    .catch(() => null);
-  if (!toggle) return { confirmed: false, reason: "control_not_found", descriptor };
-
-  await toggle.click();
-
-  const indicator = await page
-    .waitForSelector(activeIndicatorSelector, { timeout: timeoutMs })
-    .catch(() => null);
-  if (!indicator) return { confirmed: false, reason: "indicator_not_found", descriptor };
-
-  const text = await readIndicatorText(indicator);
-  if (!text || !expectedIndicatorPattern.test(text)) {
-    return { confirmed: false, reason: "indicator_mismatch", descriptor };
+  if (!(await openModePicker(page))) {
+    return { confirmed: false, reason: "control_not_found", descriptor };
   }
 
-  return { confirmed: true, descriptor };
+  const clickedLabel = await clickOptionWithRetry(page, labelPattern, timeoutMs);
+  if (!clickedLabel) return { confirmed: false, reason: "option_not_found", descriptor };
+
+  // Read the active mode back from the picker button.
+  const readDeadline = Date.now() + timeoutMs;
+  while (Date.now() < readDeadline) {
+    const label = await readModePickerLabel(page);
+    if (label && expected.test(label)) return { confirmed: true, descriptor };
+    await page.waitForTimeout(SELECTION_POLL_INTERVAL_MS);
+  }
+
+  return { confirmed: false, reason: "indicator_mismatch", descriptor };
 }
 
 export function resolveGeminiModelMode(modelId: string): GeminiWebModeDescriptor | null {
@@ -181,19 +338,39 @@ export async function selectGeminiModel(
   return selectGeminiUiMode(page, descriptor, timeoutMs);
 }
 
-/** Select + verify the Extended Thinking control (#13381 follow-up). */
-export async function selectGeminiExtendedThinking(
+/**
+ * Select + verify a "Denkaufwand" level (#13381 follow-up).
+ *
+ * Verified through the option's own selected state, because the picker label
+ * echoes the model only. An option exposing neither `aria-checked` nor
+ * `aria-selected` is reported unverified — the caller treats thinking depth as a
+ * soft hint and continues (see the executor).
+ */
+export async function selectGeminiThinkingLevel(
   page: GeminiAutomationPage,
-  timeoutMs?: number
+  level: "low" | "medium" | "high",
+  timeoutMs = 5000
 ): Promise<GeminiModeSelectionResult> {
-  return selectGeminiUiMode(page, GEMINI_WEB_EXTENDED_THINKING_MODE, timeoutMs);
+  const descriptor = GEMINI_WEB_THINKING_LEVELS[level];
+  if (!descriptor.menuLabelPattern) {
+    return { confirmed: false, reason: "unknown_model", descriptor };
+  }
+  if (!(await openModePicker(page))) {
+    return { confirmed: false, reason: "control_not_found", descriptor };
+  }
+  const clickedLabel = await clickOptionWithRetry(page, descriptor.menuLabelPattern, timeoutMs);
+  if (!clickedLabel) return { confirmed: false, reason: "option_not_found", descriptor };
+
+  const checked = await readOptionChecked(page, descriptor.menuLabelPattern.source);
+  if (checked === true) return { confirmed: true, descriptor };
+  return { confirmed: false, reason: "indicator_mismatch", descriptor };
 }
 
 const REASON_DETAIL: Record<GeminiModeSelectionFailureReason, string> = {
   unknown_model: "it is not one of the advertised, selectable gweb models",
-  control_not_found: "the Gemini UI control used to switch modes was not found",
-  indicator_not_found: "the active-mode indicator used to confirm the switch was not found",
-  indicator_mismatch: "the active-mode indicator did not confirm the switch after attempting it",
+  control_not_found: "the mode picker used to switch models was not found",
+  option_not_found: "the mode picker did not offer an option for it",
+  indicator_mismatch: "the mode picker still reports a different active mode",
 };
 
 /**

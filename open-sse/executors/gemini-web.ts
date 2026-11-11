@@ -23,6 +23,8 @@ import {
   resolveResponseTimeoutMs,
 } from "./gemini-web/browserErrors.ts";
 import { getStableLauncher } from "./gemini-web/browserLease.ts";
+import { waitForGeminiDomAnswer } from "./gemini-web/domAnswer.ts";
+import { dismissGeminiConsent } from "./gemini-web/consent.ts";
 import { normalizeGeminiCookieInput } from "../utils/geminiCookies.ts";
 import { prepareToolMessages } from "../translator/webTools.ts";
 import { buildToolModeResponse } from "./chatgptWebTools.ts";
@@ -34,15 +36,16 @@ import {
 } from "./gemini-web/capabilities.ts";
 import {
   describeModeSelectionFailure,
-  selectGeminiExtendedThinking,
+  resolveThinkingLevel,
+  selectGeminiThinkingLevel,
   selectGeminiModel,
 } from "./gemini-web/modeSelection.ts";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const GEMINI_URL = "https://gemini.google.com/app";
-/** Response-label fallback when no `model` was requested at all (unchanged since pre-#13381). */
-const DEFAULT_MODEL_ID = "gemini-2.5-pro";
+/** Response-label fallback when no `model` was requested at all (the app's default mode). */
+const DEFAULT_MODEL_ID = "gemini-3.5-flash-lite";
 
 // Re-exported for backward compatibility: some tests/callers import this classification helper
 // from gemini-web.ts, its original home (#3516). The implementation now lives in
@@ -511,6 +514,7 @@ export class GeminiWebExecutor extends BaseExecutor {
       };
     }
     const wantsExtendedThinking = requestsThinkingBudget(rawBody.reasoning_effort);
+    const thinkingLevel = resolveThinkingLevel(rawBody.reasoning_effort);
 
     const cookie = resolveGeminiWebCookie(credentials);
     if (!cookie) {
@@ -606,34 +610,44 @@ export class GeminiWebExecutor extends BaseExecutor {
 
       const page = await context.newPage();
 
-      // Capture first StreamGenerate response
+      // Legacy capture: the answer used to arrive in a `StreamGenerate` XHR. On a
+      // current account that request is gone (the reply comes from a service-worker
+      // fetch the page never sees), so this listener only stays as a fast path for
+      // accounts/locales that still use it. The DOM reader below is the real source.
       let responseText = "";
-      let captured = false;
-      const responsePromise = new Promise<void>((resolve) => {
-        page.on("response", async (resp: any) => {
-          if (!resp.url().includes("StreamGenerate")) return;
-          if (captured) return;
-          // Resolve even if reading the body throws, so the flow falls through
-          // to the "No response from Gemini" 502 instead of burning the full
-          // wait window.
-          captured = true;
-          try {
-            const raw = await resp.text();
-            responseText = parseStreamResponse(raw);
-          } catch {
-            /* ignore */
-          }
-          resolve();
-        });
+      page.on("response", async (resp: any) => {
+        if (responseText) return;
+        if (!resp.url().includes("StreamGenerate")) return;
+        try {
+          const raw = await resp.text();
+          responseText = parseStreamResponse(raw) || responseText;
+        } catch {
+          /* ignore */
+        }
       });
 
       await page.goto(GEMINI_URL, { waitUntil: "domcontentloaded", timeout: 20000 });
       if (signal?.aborted) {
         throw signal.reason instanceof Error ? signal.reason : new Error("Request aborted");
       }
+      // A fresh context carries no consent state, so Google's "Before you continue"
+      // dialog renders over the app and intercepts every pointer event (measured
+      // 2026-11-11: each Playwright click timed out at 30 s until it was dismissed).
+      const consentLabel = await dismissGeminiConsent(page);
+      if (consentLabel) {
+        log?.warn?.("GEMINI-WEB", `Dismissed Google consent dialog ("${consentLabel}")`);
+      }
       // #13382: the composer selector is the readiness check. A fixed 3s sleep
       // ran even when the editor was already there, and still raced a slow load.
       await page.waitForSelector(".ql-editor, [contenteditable='true']", { timeout: 10000 });
+
+      // Persist cookies Google rotated during the load BEFORE doing anything else.
+      // Measured 2026-11-11: the session's `__Secure-1PSIDTS` rotates on the first
+      // signed-in page load, and the stored copy goes stale the moment it does — so
+      // waiting until the end of the request (or never reaching it, on a failed
+      // selection) left the DB with a dead credential and the next request ran as a
+      // guest. Persisting here makes the connection self-healing on every load.
+      await this.persistRotatedCookies(context, cookie, credentials, onCredentialsRefreshed, log);
 
       // #13381 (Option B): verify the requested Gemini UI mode is actually active
       // BEFORE anything is typed. `gemini-3.1-pro` is the mode gemini.google.com/app
@@ -669,41 +683,43 @@ export class GeminiWebExecutor extends BaseExecutor {
         }
       }
 
-      // Extended Thinking (#13381 follow-up, 2026-09-11): same detect-and-verify,
-      // fail-closed pattern as model selection above — attempted only when requested
-      // (`reasoning_effort` above "minimal"), never assumed available.
+      // Thinking depth (#13381 follow-up): measured 2026-11-11 the control is a
+      // "Denkaufwand" group inside the same mode picker (Niedrig/Mittel/Hoch), and
+      // the picker label does NOT echo the chosen level — only the model. So this
+      // is a soft hint: attempted and verified when possible, but never allowed to
+      // fail the request (a client-side `reasoning_effort` must not turn into a 400
+      // for a request that would otherwise succeed).
       if (wantsExtendedThinking) {
-        const thinkingSelection = await selectGeminiExtendedThinking(page);
-        if (!thinkingSelection.confirmed) {
+        const thinkingSelection = await selectGeminiThinkingLevel(page, thinkingLevel);
+        if (thinkingSelection.confirmed) {
+          log?.warn?.("GEMINI-WEB", `Applied thinking effort "${thinkingLevel}"`);
+        } else {
           log?.warn?.(
             "GEMINI-WEB",
-            `Rejected request: could not confirm Extended Thinking is available ` +
+            `Continuing without a confirmed thinking effort "${thinkingLevel}" ` +
               `(${thinkingSelection.reason})`
           );
-          return {
-            response: new Response(
-              JSON.stringify(
-                buildErrorBody(
-                  400,
-                  describeModeSelectionFailure("Extended Thinking", thinkingSelection.reason),
-                  null,
-                  { type: "invalid_request_error", code: GEMINI_WEB_UNSUPPORTED_CONTROL_CODE }
-                )
-              ),
-              { status: 400, headers: { "Content-Type": "application/json" } }
-            ),
-            url: GEMINI_URL,
-            headers: {},
-            transformedBody: body,
-          };
         }
       }
 
-      // Type and send message
-      const inputEl = await page.waitForSelector(".ql-editor, [contenteditable='true']", {
-        timeout: 10000,
+      // Focus the composer through the DOM instead of a Playwright click: Google
+      // renders overlay scrims (`.cdk-overlay-container`) that swallow real pointer
+      // events, and every `elementHandle.click` against them timed out at 30 s
+      // (measured 2026-11-11). `insertText` only needs the element focused, which
+      // `focus()` provides — a real click stays as a fallback for renders where it
+      // does not.
+      const composerFocused = await page.evaluate(() => {
+        const el = document.querySelector(".ql-editor, [contenteditable='true']");
+        if (!el) return false;
+        (el as HTMLElement).focus();
+        return true;
       });
-      await inputEl.click();
+      if (!composerFocused) {
+        const inputEl = await page.waitForSelector(".ql-editor, [contenteditable='true']", {
+          timeout: 10000,
+        });
+        await inputEl.click({ timeout: 5000 }).catch(() => {});
+      }
       // insertText() dispatches a DOM `input` event atomically instead of a
       // per-character keydown/keypress/keyup sequence (#13380) — an embedded
       // `\n` in `prompt` (produced by the multi-turn transcript format above,
@@ -715,7 +731,14 @@ export class GeminiWebExecutor extends BaseExecutor {
       await page.waitForTimeout(300);
       await page.keyboard.press("Enter");
 
-      await Promise.race([responsePromise, page.waitForTimeout(resolveResponseTimeoutMs(modelId))]);
+      // Wait for a complete answer from either source (see gemini-web/domAnswer.ts).
+      if (!responseText) {
+        responseText = await waitForGeminiDomAnswer(
+          page,
+          resolveResponseTimeoutMs(modelId),
+          () => responseText
+        );
+      }
       if (signal?.aborted) {
         throw signal.reason instanceof Error ? signal.reason : new Error("Request aborted");
       }
