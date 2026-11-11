@@ -20,6 +20,7 @@ interface LiteCompressionOptions {
   supportsVision?: boolean | null;
   preserveSystemPrompt?: boolean;
   compressToolResults?: boolean;
+  preserveToolWhitespace?: boolean;
   maxToolLength?: number;
   /** Resolved upstream provider / wire format of the target (same plumbing as session-dedup). */
   provider?: string | null;
@@ -77,6 +78,7 @@ export function collapseWhitespace(
   let applied = false;
   const messages = body.messages.map((msg) => {
     if (options.preserveSystemPrompt === true && msg.role === "system") return msg;
+    if (options.preserveToolWhitespace === true && msg.role === "tool") return msg;
     if (typeof msg.content !== "string") return msg;
     const normalized = normalizeMessageWhitespace(msg.content);
     if (normalized !== msg.content) applied = true;

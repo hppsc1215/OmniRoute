@@ -174,12 +174,15 @@ export function buildProviderLimitsCacheEntry(
   provider: string,
   usage: JsonRecord,
   source: string,
-  previous: ProviderLimitsCacheEntry | null | undefined
+  previous: ProviderLimitsCacheEntry | null | undefined,
+  // Upstream threads an explicit read time (Codex documents its observation
+  // window); undefined keeps `toProviderLimitsCacheEntry`'s own default.
+  fetchedAt?: string
 ): { next: ProviderLimitsCacheEntry; cache: ProviderLimitsCacheEntry } {
   const effectiveSource = isPassiveCopilotQuotaUsage(provider, usage)
     ? PASSIVE_QUOTA_SOURCE
     : source;
-  const next = toProviderLimitsCacheEntry(usage, effectiveSource);
+  const next = toProviderLimitsCacheEntry(usage, effectiveSource, fetchedAt);
   const cache = mergeProviderLimitsCacheEntry(
     provider,
     preserveCreditBearingQuotas(next, previous),

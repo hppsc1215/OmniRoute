@@ -12,7 +12,6 @@
 import Link from "next/link";
 
 import Icon from "@/shared/components/Icon";
-
 import { providerText, type ProviderMessageTranslator } from "../providerPageHelpers";
 
 export interface ModelComboBadgeProps {
