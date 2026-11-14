@@ -51,37 +51,6 @@ export function readQuotaCreditCounts(quota: Record<string, unknown>): QuotaCred
 }
 
 /**
- * `quota_snapshots.raw_data` carries the interpretation flags hydration needs
- * and — for windows that reported real credit counts — the counts themselves,
- * in the shape `githubQuotaSnapshotStore.readSnapshotRows` already reads back
- * (`source:"response_headers"`). Percentage-only windows keep the legacy
- * boolean-only payload so old hydration behaviour is unchanged.
- */
-export function quotaSnapshotMetadata(
-  fractionReported: boolean,
-  overagePermitted: boolean,
-  creditCounts: QuotaCreditCounts | null,
-  remainingPercentage: number
-): string | null {
-  if (fractionReported && creditCounts) {
-    return JSON.stringify({
-      source: "response_headers",
-      creditsUsed: creditCounts.used,
-      entitlement: creditCounts.total,
-      remaining: creditCounts.remaining,
-      remainingPercentage,
-      unlimited: false,
-      overageUsed: creditCounts.overageUsed,
-      overagePermitted,
-    });
-  }
-  const metadata: Record<string, boolean> = {};
-  if (!fractionReported) metadata.fractionReported = false;
-  if (overagePermitted) metadata.overagePermitted = true;
-  return Object.keys(metadata).length > 0 ? JSON.stringify(metadata) : null;
-}
-
-/**
  * #4438 — Decide whether a quota snapshot row is worth persisting.
  *
  * The background refresh ticks every 60s for ALL connections, so idle accounts
@@ -191,6 +160,44 @@ function quotaWindowSnapshotIsCurrent(
   );
 }
 
+/**
+ * `quota_snapshots.raw_data` carries the interpretation flags hydration needs,
+ * the opaque Codex owner epoch, and — for windows that reported real credit
+ * counts — the counts themselves, in the shape
+ * `githubQuotaSnapshotStore.readSnapshotRows` already reads back
+ * (`source:"response_headers"`). Percentage-only windows keep the legacy
+ * boolean-only payload so old hydration behaviour is unchanged.
+ *
+ * Never stores credentials: the Codex owner epoch is opaque.
+ */
+function quotaSnapshotMetadata(
+  codexOwnerEpoch: string | null,
+  fractionReported: boolean,
+  overagePermitted: boolean,
+  creditCounts: QuotaCreditCounts | null,
+  remainingPercentage: number
+): string | null {
+  if (fractionReported && creditCounts) {
+    return JSON.stringify({
+      source: "response_headers",
+      creditsUsed: creditCounts.used,
+      entitlement: creditCounts.total,
+      remaining: creditCounts.remaining,
+      remainingPercentage,
+      unlimited: false,
+      overageUsed: creditCounts.overageUsed,
+      overagePermitted,
+      ...(codexOwnerEpoch ? { codexOwnerEpoch } : {}),
+    });
+  }
+  if (!codexOwnerEpoch && fractionReported && !overagePermitted) return null;
+  const metadata: Record<string, boolean | string> = {};
+  if (!fractionReported) metadata.fractionReported = false;
+  if (overagePermitted) metadata.overagePermitted = true;
+  if (codexOwnerEpoch) metadata.codexOwnerEpoch = codexOwnerEpoch;
+  return Object.keys(metadata).length > 0 ? JSON.stringify(metadata) : null;
+}
+
 function persistOneQuotaWindow(
   connectionId: string,
   provider: string,
@@ -200,7 +207,8 @@ function persistOneQuotaWindow(
   quotas: Record<string, QuotaInfo>,
   prior: QuotaCacheEntry | null,
   retainedCodexWindows: Set<string>,
-  codexSnapshots: { current?: ReturnType<typeof getLatestQuotaSnapshotsForConnection> }
+  codexSnapshots: { current?: ReturnType<typeof getLatestQuotaSnapshotsForConnection> },
+  codexOwnerEpoch: string | null
 ): void {
   if (!quotaInfo || typeof quotaInfo !== "object") return;
   const normalized = quotas[windowKey];
@@ -264,6 +272,7 @@ function persistOneQuotaWindow(
       // Persist the interpretation flags plus any real credit counts — never
       // the raw provider payload.
       raw_data: quotaSnapshotMetadata(
+        codexOwnerEpoch,
         fractionReported,
         overagePermitted,
         creditCounts,
@@ -282,7 +291,8 @@ export function persistQuotaWindowSnapshots(
   rawQuotas: Record<string, unknown>,
   quotas: Record<string, QuotaInfo>,
   prior: QuotaCacheEntry | null,
-  retainedCodexWindows: Set<string>
+  retainedCodexWindows: Set<string>,
+  codexOwnerEpoch: string | null = null
 ): void {
   const codexSnapshots: { current?: ReturnType<typeof getLatestQuotaSnapshotsForConnection> } = {};
   for (const [windowKey, quotaInfo] of Object.entries(rawQuotas)) {
@@ -295,7 +305,8 @@ export function persistQuotaWindowSnapshots(
       quotas,
       prior,
       retainedCodexWindows,
-      codexSnapshots
+      codexSnapshots,
+      codexOwnerEpoch
     );
   }
 }

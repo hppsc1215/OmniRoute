@@ -39,6 +39,15 @@ export type CostCalculationOptions = {
    * `provider` to be set.
    */
   flatRateAsZero?: boolean;
+  /**
+   * When true, the token counts are a SUM over many requests (e.g. the GROUP BY
+   * rows of usage analytics), so the per-request long-context pricing tier is
+   * skipped: the summed input would falsely trip its threshold (#19429).
+   * Trade-off: a genuine single long-context request inside such a sum is then
+   * billed at the base rates, since the sum cannot tell the cases apart.
+   * Not to be confused with the row-level `isAggregated` (rollup) field.
+   */
+  aggregatedTokens?: boolean;
 };
 
 /**
@@ -294,7 +303,9 @@ export function computeCostFromPricing(
   // `input_tokens` + cache counters are normalized by the translators before costing —
   // see the #13746 regression suite), so cache reads must not be added again here.
   const inputTokens = promptTokensForTier(tokens);
-  const rates = applyLongContextTier(pricing, inputTokens);
+  // #19501: an aggregated analytics row already sums per-request costs, so applying
+  // the long-context tier again would charge the tier twice.
+  const rates = options.aggregatedTokens ? pricing : applyLongContextTier(pricing, inputTokens);
   const inputPrice = toNumber(rates.input, 0);
   const cachedPrice = toNumber(rates.cached, inputPrice);
   const outputPrice = toNumber(rates.output, 0);

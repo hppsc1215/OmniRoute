@@ -1285,7 +1285,7 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, RequestLoggerV2Initial
                   aria-pressed={isActive}
                   onClick={() => setSelectedProvider(isActive ? "" : p)}
                   className={cn(
-                    "h-7 min-h-7 rounded-full border px-3 text-xs font-bold uppercase",
+                    "h-7 min-h-7 rounded-full border px-3 text-xs font-semibold uppercase",
                     isActive
                       ? "border-border-strong ring-1 ring-border-strong"
                       : "border-transparent hover:bg-bg-subtle"
@@ -1416,7 +1416,7 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, RequestLoggerV2Initial
                                     ? "error"
                                     : httpStatusTone(log.status)
                                 }
-                                className="min-w-[36px] justify-center font-bold"
+                                className="min-w-[36px] justify-center font-semibold"
                               >
                                 {httpKind === "transport_error"
                                   ? t("transportError")
@@ -1479,7 +1479,7 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, RequestLoggerV2Initial
                               <Badge
                                 size="sm"
                                 variant={cacheSourceMeta.variant}
-                                className="text-[9px] font-bold uppercase"
+                                className="text-[9px] font-semibold uppercase"
                                 title={
                                   isSemanticCache ? t("semanticCacheHit") : t("upstreamResponse")
                                 }
@@ -1505,7 +1505,7 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, RequestLoggerV2Initial
                             <span>{log.model}</span>
                             {!isActive && log.groupStatus === "healed" && !log.isRetry && (
                               <span
-                                className="inline-flex items-center gap-0.5 rounded border border-success/25 bg-success/15 px-1 py-0 text-[8px] font-bold text-success"
+                                className="inline-flex items-center gap-0.5 rounded border border-success/25 bg-success/15 px-1 py-0 text-[8px] font-semibold text-success"
                                 title={t("status.recoveredAttemptsTitle", { count: log.groupSize })}
                               >
                                 {t("status.healed")}
@@ -1513,7 +1513,7 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, RequestLoggerV2Initial
                             )}
                             {!isActive && log.groupStatus === "failed" && !log.isRetry && (
                               <span
-                                className="inline-flex items-center gap-0.5 rounded border border-error/25 bg-error/15 px-1 py-0 text-[8px] font-bold text-error"
+                                className="inline-flex items-center gap-0.5 rounded border border-error/25 bg-error/15 px-1 py-0 text-[8px] font-semibold text-error"
                                 title={t("status.latestOutcomeFailed")}
                               >
                                 {t("status.failed")}
@@ -1521,7 +1521,7 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, RequestLoggerV2Initial
                             )}
                             {log.modelPinned && (
                               <span
-                                className="inline-flex items-center gap-0.5 rounded border border-chart-3/25 bg-chart-3/15 px-1 py-0 text-[8px] font-bold text-chart-3"
+                                className="inline-flex items-center gap-0.5 rounded border border-chart-3/25 bg-chart-3/15 px-1 py-0 text-[8px] font-semibold text-chart-3"
                                 title={t("status.pinnedTitle")}
                               >
                                 {t("status.pinned")}
@@ -1583,7 +1583,7 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, RequestLoggerV2Initial
                         <TableCell className="px-3 py-2">
                           {/* Provider identity tone (kit chart token), not a status tone. */}
                           <span
-                            className="inline-block rounded px-2 py-0.5 text-[9px] font-bold uppercase"
+                            className="inline-block rounded px-2 py-0.5 text-[9px] font-semibold uppercase"
                             style={{
                               backgroundColor: providerColor.bg,
                               color: providerColor.text,
@@ -1599,7 +1599,7 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, RequestLoggerV2Initial
                             <span className="text-[10px] text-text-muted">—</span>
                           ) : (
                             <span
-                              className="inline-block rounded px-2 py-0.5 text-[9px] font-bold uppercase"
+                              className="inline-block rounded px-2 py-0.5 text-[9px] font-semibold uppercase"
                               style={
                                 protocol
                                   ? { backgroundColor: protocol.bg, color: protocol.text }
@@ -1636,7 +1636,7 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, RequestLoggerV2Initial
                           {isActive ? (
                             <span className="text-[10px] text-text-muted">—</span>
                           ) : log.comboName ? (
-                            <span className="inline-block rounded-full border border-chart-3/40 bg-chart-3/20 px-2 py-0.5 text-[9px] font-bold text-chart-3">
+                            <span className="inline-block rounded-full border border-chart-3/40 bg-chart-3/20 px-2 py-0.5 text-[9px] font-semibold text-chart-3">
                               {log.comboName}
                             </span>
                           ) : (

@@ -553,11 +553,6 @@
       "count": 3
     }
   },
-  "open-sse/translator/request/openai-to-claude.ts": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    }
-  },
   "open-sse/translator/request/openai-to-gemini.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 5
@@ -694,11 +689,6 @@
     }
   },
   "src/app/(dashboard)/dashboard/providers/[id]/components/ConnectionsListPanel.tsx": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 3
-    }
-  },
-  "src/app/(dashboard)/dashboard/providers/[id]/components/PassthroughModelsSection.tsx": {
     "@typescript-eslint/no-unused-vars": {
       "count": 3
     }
@@ -1389,11 +1379,6 @@
     }
   },
   "src/lib/sseTextTransform.ts": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    }
-  },
-  "src/lib/streamingPiiTransform.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1
     }
