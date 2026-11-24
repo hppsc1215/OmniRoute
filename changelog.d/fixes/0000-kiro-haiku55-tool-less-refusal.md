@@ -1,0 +1,1 @@
+- **fix(kiro):** `claude-haiku-5.5` no longer returns empty responses for tool-less requests (title generation, image description, one-shot JSON tasks). Kiro refuses every request without a tool schema for this model (`stopReason: CONTENT_FILTERED`, no content), so the translator now injects one inert placeholder tool and the executor drops any call to it.

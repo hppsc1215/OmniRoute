@@ -17,6 +17,7 @@ import {
   supportsKiroAdaptiveThinking,
   supportsKiroNativeReasoning,
 } from "./openai-to-kiro/adaptiveThinking.ts";
+import { KIRO_PLACEHOLDER_TOOL_NAME } from "../../executors/kiroToolCallValidation.ts";
 
 /**
  * Anthropic's direct-provider `[1m]` context-1m beta suffix. Kiro is AWS
@@ -50,6 +51,23 @@ function wrapSystemReminder(text: string): string {
 
 /** Kiro rejects a `toolSpecification.description` longer than ~10000 chars. */
 const KIRO_TOOL_DESC_MAX = 10000;
+
+/**
+ * Kiro models that refuse (`stopReason: CONTENT_FILTERED`, no content) any request
+ * whose current message carries no tool schema. Measured on claude-haiku-5.5;
+ * claude-haiku-4.5 / claude-sonnet-4.5 / claude-opus-5.5 answer tool-less requests.
+ */
+const KIRO_MODELS_REQUIRING_TOOLS = new Set(["claude-haiku-5.5"]);
+
+/** Inert tool injected for {@link KIRO_MODELS_REQUIRING_TOOLS}; calls to it are dropped. */
+const KIRO_PLACEHOLDER_TOOL = {
+  type: "function",
+  function: {
+    name: KIRO_PLACEHOLDER_TOOL_NAME,
+    description: "Placeholder. Never call this tool; answer the user directly.",
+    parameters: { type: "object", properties: {}, required: [] },
+  },
+};
 
 /** OpenAI- and Anthropic-shaped tool declarations, as clients actually send them. */
 type KiroToolInput = {
@@ -964,6 +982,17 @@ export function buildKiroPayload(model, body, stream, credentials) {
       tools = synthesized;
       synthesizedToolNames = [...seen];
     }
+  }
+
+  // Some Kiro models refuse every tool-less request: claude-haiku-5.5 answers HTTP 200
+  // with only `metadataEvent {stopReason: CONTENT_FILTERED, stopDetails.refusal.category:
+  // CYBER}` and no content, for any prompt (even "2+2="). A non-empty tools list is
+  // enough to clear it (an empty `tools: []` is not). Small helper calls such as title
+  // generation or image description carry no tools, so add one inert placeholder. The
+  // executor drops any call to it, so the client never sees an undeclared tool.
+  if (tools.length === 0 && KIRO_MODELS_REQUIRING_TOOLS.has(normalizedModel)) {
+    tools = [KIRO_PLACEHOLDER_TOOL];
+    synthesizedToolNames = [KIRO_PLACEHOLDER_TOOL_NAME];
   }
 
   const { history, currentMessage, toolsAttached, toolDocs } = convertMessages(

@@ -11,6 +11,12 @@ export type JsonRecord = Record<string, unknown>;
 
 export const KIRO_TOOL_CALL_WRAPPER = "tool_call";
 
+/**
+ * Inert tool openai-to-kiro injects for models that refuse tool-less requests
+ * (claude-haiku-5.5). The client never declared it, so the executor drops calls to it.
+ */
+export const KIRO_PLACEHOLDER_TOOL_NAME = "omniroute_noop";
+
 export type PendingKiroWrapperToolCall = {
   toolCallId: string;
   toolName: string;

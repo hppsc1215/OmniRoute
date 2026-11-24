@@ -28,6 +28,7 @@ import {
   resolveKiroRuntimeRegion,
 } from "../services/kiroRegion.ts";
 import {
+  KIRO_PLACEHOLDER_TOOL_NAME,
   KIRO_TOOL_CALL_WRAPPER,
   appendBufferedKiroToolInput,
   encodeSse,
@@ -912,7 +913,6 @@ export class KiroExecutor extends BaseExecutor {
 
             // Handle toolUseEvent
             if (eventType === "toolUseEvent" && event.payload) {
-              state.hasToolCalls = true;
               const toolUse = event.payload;
               const toolUses = Array.isArray(toolUse) ? toolUse : [toolUse];
 
@@ -928,6 +928,9 @@ export class KiroExecutor extends BaseExecutor {
                   );
                   return;
                 }
+                // Gateway-injected placeholder (openai-to-kiro): never surface it.
+                if (toolName === KIRO_PLACEHOLDER_TOOL_NAME) continue;
+                state.hasToolCalls = true;
 
                 const toolCallId = getToolCallId(singleToolUse);
                 const toolInput = singleToolUse.input;
